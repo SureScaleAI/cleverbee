@@ -1,0 +1,192 @@
+# =========================
+# CLEVERBEE CONFIGURATION
+# =========================
+# This file controls the core behavior, model selection, data processing,
+# tool usage, and operational parameters of the CleverBee system.
+
+# ===================================
+# SECTION 1: CORE MODEL CONFIGURATION
+# ===================================
+# Settings determining the primary AI models used for reasoning, planning,
+# and final report generation.
+
+# --- Primary Model Type ---
+# Selects which type of model to use as the primary reasoning agent.
+# This setting controls which model handles research planning, tool selection, and report writing.
+# Options:
+# - "gemini": Use Google's Gemini models via API
+# - "claude": Use Anthropic's Claude models via API
+# - "local": Use a locally hosted GGUF model via llama.cpp
+PRIMARY_MODEL_TYPE: "gemini"
+# --- Specific Model Selection ---
+# Define the exact model name to use for each provider type.
+# The system will use the model that corresponds to the selected PRIMARY_MODEL_TYPE.
+CLAUDE_MODEL_NAME: "claude-3-7-sonnet-20250219"
+GEMINI_MODEL_NAME: "gemini-2.5-pro-preview-03-25"
+LOCAL_MODEL_NAME: null
+LOCAL_MODEL_QUANT_LEVEL: null
+# --- Local Model Usage ---
+# Determines if locally hosted models should be prioritized for summarization tasks.
+# This setting is automatically updated by `setup.sh` based on the chosen summarizer model.
+# If `true`, the system attempts to use the locally downloaded model specified below.
+# If `false`, the cloud model (e.g., `gemini-2.0-flash`) is used for summarization.
+USE_LOCAL_SUMMARIZER_MODEL: false
+# --- Local Model Configuration ---
+# Directory where local model files (like GGUF) are stored.
+# This path is used by the LLM factory when USE_LOCAL_SUMMARIZER_MODEL is true.
+LOCAL_MODELS_DIR: "models"
+# --- GPU Offloading (for Local Models) ---
+# Number of model layers to offload to the GPU (e.g., Metal on Mac, CUDA on Nvidia).
+# - `0` uses CPU only.
+# - `-1` attempts to offload all layers (may use excessive RAM or be unstable).
+# - A positive number (e.g., 1, 10, 32) offloads that many layers.
+# `setup.sh` attempts to detect your hardware (Apple Silicon, Nvidia) and
+# recommends an optimal value during setup, which you can accept or override.
+# Recommended starting points (if setting manually):
+#   - Apple Silicon (M1/M2/M3): 10-48 depending on model & chip (see setup.sh logic)
+#   - Nvidia GPU: 20-35 depending on model & VRAM
+N_GPU_LAYERS: 0
+# =======================================
+# SECTION 2: SUMMARIZATION CONFIGURATION
+# =======================================
+# Settings controlling how text content (e.g., web pages, documents) is summarized
+# during the research process, both for intermediate steps and potential memory management.
+
+# --- Summarization Model ---
+# Specifies which model to use for summarization tasks.
+# This value is set by `setup.sh` based on your selection.
+# Available options presented during setup depend on detected RAM and GPU:
+#   - gemini-2.0-flash:                          [Cloud, Recommended for <8GB RAM, no download]
+#   - DeepSeek-R1-Distill-Llama-8B-Q4_K_M.gguf: [Local GGUF, Recommended for NVIDIA and >=8GB RAM]
+#   - yarn-mistral-7b-64k.Q4_K_M.gguf:        [Local GGUF, Optional for NVIDIA users >=8GB RAM]
+# Selecting a local model sets `USE_LOCAL_SUMMARIZER_MODEL` to `true` automatically by setup.sh.
+SUMMARIZER_MODEL: "gemini-2.0-flash"
+# --- General Summarization Limits ---
+# Sets the maximum number of tokens the summarization model should generate for EACH summary.
+# This applies to both cloud and local summarization models. It directly influences
+# the length and detail of intermediate summaries produced by the ContentManager.
+SUMMARY_MAX_TOKENS: 1200
+# --- Final Summary Limits ---
+# Sets the maximum number of tokens the final summarization model should generate for the FINAL report.
+# This applies specifically to the LLM instance responsible for creating the comprehensive research report.
+# This is defined in the ResearcherAgent's initialization.
+FINAL_SUMMARY_MAX_TOKENS: 8000
+# --- Next Step Model ---
+# Specifies which model to use for next step/agentic decision tasks.
+# This model is used for agentic decision steps (the action loop), separate from the primary LLM and summarizer model.
+# Example: "gemini-2.5-flash" (recommended for fast, cost-effective next-step reasoning)
+NEXT_STEP_MODEL: "gemini-2.5-flash-preview-04-17"
+# If true, next step model will default to "thinking mode" (extra tokens/depth) unless overridden by planner output.
+NEXT_STEP_THINKING_DEFAULT: false
+# ======================================
+# SECTION 3: CONTENT PROCESSING & MEMORY
+# ======================================
+# Settings related to how raw text content is handled, chunked, loaded,
+# and how the agent's conversation history is managed.
+
+# --- Text Chunking Parameters ---
+# When processing large documents with local models, the text is split into smaller chunks.
+# These settings, used by the ContentManager's RecursiveCharacterTextSplitter, control this process.
+# The `CHUNK_SIZE` is adjusted automatically by `setup.sh` based on the selected local model:
+#   - gemini-2.0-flash:                          CHUNK_SIZE = 0 (no chunking, cloud model)
+#   - DeepSeek-R1-Distill-Llama-8B-Q4_K_M.gguf: CHUNK_SIZE = 3000
+#   - yarn-mistral-7b-64k.Q4_K_M.gguf:         CHUNK_SIZE = 7000
+CHUNK_SIZE: 0
+CHUNK_OVERLAP: 400 # The number of characters from the end of one chunk to include at the start of the next.
+# --- Content Optimization ---
+# Options to potentially improve performance or change how content is presented to the LLM.
+USE_PROGRESSIVE_LOADING: true # If true, the ContentManager might initially provide summaries
+# instead of full content, loading full content only when needed.
+
+# --- Agent Reasoning Enhancement ---
+# Settings potentially allowing the agent more 'thinking time' or resources for complex steps.
+# NOTE: The 'ENABLE_THINKING' feature's effectiveness might depend on the specific LLM used
+# (e.g., Claude 3.7 was mentioned in code comments).
+ENABLE_THINKING: true # If true, attempts to allocate more processing capacity (e.g., tokens)
+# for specific reasoning steps, potentially improving complex task performance.
+THINKING_BUDGET: 4000 # Maximum *additional* tokens to allocate for a thinking step if ENABLE_THINKING is true.
+# --- Conversation Memory ---
+# Configures the agent's memory, managed by ConversationSummaryBufferMemory.
+# This memory stores recent interactions directly and summarizes older ones.
+# CONVERSATION_MEMORY_MAX_TOKENS: 120000  # Example: For Claude 3.7 Sonnet
+CONVERSATION_MEMORY_MAX_TOKENS: 900000 # Example: For Gemini 2.5 Pro
+# Set to ~90% of the main reasoning model's context window to allow space for the prompt,
+# tool usage details, and the model's response generation.
+# Adjust based on the MAIN_LLM_PROVIDER and selected model's context size.
+
+# ======================================
+# SECTION 4: SEARCH & BROWSER SETTINGS
+# ======================================
+# Parameters controlling how the agent gathers information from the web and specific platforms.
+
+# --- Web Search Limits ---
+# Controls the number of standard web search results (e.g., from Google) processed per research run.
+# This applies to the general `web_browser` tool when used for searching or extracting from search results.
+MIN_REGULAR_WEB_PAGES: 1 # The minimum number of distinct web pages the agent should aim to process.
+MAX_REGULAR_WEB_PAGES: 10 # The maximum number of distinct web pages the agent is allowed to process.
+# This acts as a cap to control scope and cost.
+
+# --- Reddit Search Limits ---
+# Controls the number of Reddit posts retrieved when using the `reddit_search` tool.
+MIN_POSTS_PER_SEARCH: 1 # Minimum Reddit posts the tool should attempt to return per search query.
+MAX_POSTS_PER_SEARCH: 10 # Maximum Reddit posts the tool should return per search query.
+# --- Browser Behavior ---
+# Settings for the underlying Playwright browser instance used by tools like `web_browser`.
+BROWSER_NAVIGATION_TIMEOUT: 15000 # Maximum time (in milliseconds) to wait for a single page
+# navigation (e.g., clicking a link, loading a URL) to complete.
+USE_CAPTCHA_SOLVER: true # If true, attempts to use an integrated CAPTCHA solving service
+# (like Recognizer, if available) when encountering challenges.
+CAPTCHA_SOLVER_TIMEOUT: 2000 # Maximum time (in milliseconds) to wait for the CAPTCHA solver
+# to attempt a solution before giving up on that attempt.
+
+# ===================================
+# SECTION 5: TOOL CONFIGURATION
+# ===================================
+# Enables or disables specific tools available to the agent.
+# The agent's LLM decides which enabled tools to use based on the task.
+# Disabling a tool here prevents the agent from using it.
+# This corresponds to the TOOLS_CONFIG variable used in tool loading.
+tools:
+  web_browser:
+    enabled: true # Enables the core web browsing/extraction tool (Playwright based).
+    # Used for general web searches and fetching content from URLs.
+  reddit_search:
+    enabled: true # Enables the tool specifically designed for searching Reddit.
+  reddit_extract_post:
+    enabled: true # Enables the tool for extracting content from a specific Reddit post URL.
+# ==========================================
+# SECTION 6: USAGE TRACKING & PRICING
+# ==========================================
+# Settings related to monitoring resource consumption (LLM tokens) and estimating costs.
+
+# --- Tracking ---
+TRACK_TOKEN_USAGE: true # If true, enables the TokenUsageCallbackHandler to count input/output
+# tokens for each LLM call made through LangChain.
+LOG_COST_SUMMARY: true # If true (and TRACK_TOKEN_USAGE is true), prints a summary of
+# estimated costs based on token counts and configured prices
+# at the end of each research session.
+
+# --- Pricing (per 1000 tokens) ---
+# These values are used ONLY IF TRACK_TOKEN_USAGE is true.
+# They define the estimated cost for input and output tokens for different models.
+# Ensure these reflect the actual pricing of the models you are using.
+
+# Gemini 2.5 Pro Pricing
+GEMINI_COST_PER_1K_INPUT_TOKENS: 0.00125
+GEMINI_COST_PER_1K_OUTPUT_TOKENS: 0.01000
+# Gemini 2.0 Flash Pricing
+GEMINI_FLASH_COST_PER_1K_INPUT: 0.00010
+GEMINI_FLASH_COST_PER_1K_OUTPUT: 0.00040
+# Claude 3.7 Sonnet Pricing
+CLAUDE_COST_PER_1K_INPUT_TOKENS: 0.008
+CLAUDE_COST_PER_1K_OUTPUT_TOKENS: 0.024
+# ======================================
+# SECTION 7: LOGGING CONFIGURATION
+# ======================================
+# Controls the verbosity of application logs.
+
+# --- Log Level ---
+# Sets the minimum severity level for log messages that will be outputted.
+# Affects all loggers in the application unless they have a specific level set.
+# Options (most to least verbose): "DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"
+LOG_LEVEL: "DEBUG"

@@ -1,0 +1,505 @@
+/* Import Google Fonts - Poppins */
+@import url('https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700;800&display=swap');
+
+/* Import Font Awesome */
+@import url('https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css');
+
+/* Define CSS Variables for Colors - Match website/style.css */
+:root {
+  --primary-dark: #080A10; 
+  --shape-fill-color: #111827; 
+  --primary-yellow: #FACC15;
+  --primary-yellow-rgb: 250, 204, 21;
+  --hover-yellow: #F59E0B;
+  --primary-yellow-dark: #EAB308;
+  --primary-yellow-glow: rgba(250, 204, 21, 0.7);
+  --text-light: #F9FAFB;
+  --text-medium: #D1D5DB;
+  --text-dark: #09090B;
+  --bg-medium: #27272E; 
+  --bg-dark: #1E1F25;  
+  --border-color: #4B5563; 
+  --border-color-light: #6B7280;
+  
+  /* Accent colors */
+  --accent-blue: #3B82F6;
+  --accent-blue-rgb: 59, 130, 246;
+  --accent-blue-glow: rgba(59, 130, 246, 0.6);
+  --accent-purple: #8B5CF6;
+  --accent-purple-glow: rgba(139, 92, 246, 0.6);
+  --gradient-start: #FACC15;
+  --gradient-end: #F59E0B;
+  
+  /* Border radius */
+  --border-radius-sm: 6px;
+  --border-radius-md: 10px;
+  --border-radius-lg: 16px;
+  
+  /* Transition speeds */
+  --transition-speed: 0.2s;
+  --transition-speed-slow: 0.8s;
+  --transition-speed-med: 0.5s;
+}
+
+/* ====== BASE STYLES ====== */
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+body {
+  font-family: 'Poppins', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, 'Open Sans', 'Helvetica Neue', sans-serif !important;
+  background-color: var(--primary-dark) !important;
+  color: var(--text-light) !important;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* ====== HONEYCOMB BACKGROUND ====== */
+.honeycomb-background {
+  position: fixed;
+  top: 0; 
+  left: 0; 
+  width: 100%; 
+  height: 100%;
+  z-index: 0;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+#light-source-canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.honeycomb-shapes-layer {
+  position: fixed;
+  top: 0; 
+  left: 0; 
+  width: 100%; 
+  height: 100%;
+  z-index: 1;
+  overflow: hidden;
+  pointer-events: none;
+  filter: drop-shadow(0 4px 12px rgba(0, 0, 0, 0.2));
+}
+
+#shape-canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+/* ====== CHAINLIT SPECIFIC STYLING FOR NEW STRUCTURE ====== */
+
+/* Main container - matches the website's container */
+.flex.flex-row.flex-grow.overflow-auto {
+  position: relative;
+  z-index: 5;
+}
+
+/* Apply blur background to the chat container */
+.flex.flex-col.mx-auto.w-full.flex-grow.p-4 {
+  width: 95% !important;
+  margin: 0 auto;
+  padding: 24px 16px 16px 16px !important;
+  gap: 16px;
+  background: linear-gradient(120deg, rgba(20,20,30,0.5) 60%, rgba(40,40,60,0.5) 100%);
+  backdrop-filter: blur(12px) saturate(120%);
+  -webkit-backdrop-filter: blur(12px) saturate(120%);
+  border-radius: var(--border-radius-lg);
+  box-shadow: 0 8px 32px 0 rgba(0,0,0,0.15);
+}
+
+/* Style the message steps */
+.step.py-2 {
+  margin-bottom: 8px;
+  transform: translateY(20px);
+  opacity: 0;
+  transition: opacity 0.3s ease-out, transform 0.3s ease-out;
+}
+
+.step.py-2.active {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+/* Message container */
+.ai-message, [data-step-type="user_message"] > div > div {
+  width: 100%;
+}
+
+div[data-step-type="tool"] {
+  display: none !important;
+}
+
+/* User message styling */
+[data-step-type="user_message"] .prose {
+  background-color: var(--bg-medium);
+  border-left: 3px solid var(--accent-blue);
+  border-bottom-left-radius: var(--border-radius-sm);
+  margin-left: 0;
+  margin-right: auto;
+  background: linear-gradient(135deg, rgba(39, 39, 46, 0.9), rgba(30, 31, 37, 0.9));
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  padding: 16px 20px;
+  border-radius: var(--border-radius-lg);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
+  align-self: flex-start;
+  line-height: 1.6;
+}
+
+/* Assistant message styling */
+.ai-message .prose {
+  background-color: rgba(250, 204, 21, 0.1);
+  border-right: 3px solid var(--primary-yellow);
+  border-bottom-right-radius: var(--border-radius-sm);
+  margin-right: 0;
+  margin-left: auto;
+  background: linear-gradient(135deg, rgba(250, 204, 21, 0.12), rgba(245, 158, 11, 0.08));
+  border: 1px solid rgba(250, 204, 21, 0.15);
+  padding: 16px 20px;
+  border-radius: var(--border-radius-lg);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
+  max-width: 100%;
+  align-self: flex-end;
+  line-height: 1.6;
+}
+
+/* Message text styling */
+.leading-7 {
+  font-size: 1.05rem;
+  line-height: 1.6;
+}
+
+/* Message with avatar container */
+.flex.flex-col.items-start.min-w-\[150px\].flex-grow.gap-2 {
+  width: 100%;
+}
+
+/* Style the message content area */
+.message-content.w-full.flex.flex-col.gap-2 {
+  width: 100%;
+}
+
+/* Style paragraphs within messages */
+.prose p {
+  margin-top: 0;
+  margin-bottom: 0.5rem;
+}
+
+.prose p + p {
+  margin-top: 10px;
+}
+
+/* Style bold text in messages to match highlights */
+.font-bold {
+  background-color: rgba(255, 255, 255, 0.1);
+  padding: 0.1em 0.3em;
+  border-radius: 4px;
+  margin: 0 0.1em;
+  box-decoration-break: clone;
+  -webkit-box-decoration-break: clone;
+  display: inline;
+  line-height: 1.7;
+  font-weight: 500;
+  color: var(--primary-yellow);
+}
+
+/* Style links */
+a {
+  color: var(--primary-yellow);
+  text-decoration: none;
+  transition: color var(--transition-speed) ease;
+  font-weight: 500;
+  position: relative;
+  padding: 0 2px;
+}
+
+a:hover {
+  color: var(--hover-yellow);
+  text-decoration: none;
+}
+
+a::after {
+  content: '';
+  position: absolute;
+  width: 0;
+  height: 2px;
+  bottom: -2px;
+  left: 0;
+  background: linear-gradient(90deg, var(--gradient-start), var(--gradient-end));
+  transition: width 0.3s ease;
+}
+
+a:hover::after {
+  width: 100%;
+}
+
+/* Style code blocks */
+code.relative.rounded {
+  background-color: rgba(0, 0, 0, 0.3);
+  padding: 0.2em 0.4em;
+  border-radius: 3px;
+  font-size: 0.9em;
+  font-family: 'Courier New', Courier, monospace;
+}
+
+/* Style message separator */
+.step + .step {
+  margin-top: 8px;
+}
+
+/* Style list items */
+.prose ul {
+  margin-left: 1rem;
+}
+
+.prose li {
+  margin-bottom: 0.5rem;
+}
+
+/* Style Avatar Container */
+.inline-block {
+  margin-top: 5px;
+}
+
+/* Style chat input area */
+#message-composer {
+  background-color: rgba(10, 10, 15, 0.8) !important;
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  border: 1px solid var(--border-color) !important;
+  border-radius: var(--border-radius-lg) !important;
+  margin-top: 1rem;
+  padding: 0.75rem !important;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+  min-height: 80px !important;
+}
+
+/* Input text area */
+#chat-input {
+  background-color: transparent !important;
+  color: var(--text-light) !important;
+  font-family: 'Poppins', sans-serif !important;
+}
+
+#chat-input::placeholder {
+  color: var(--text-medium) !important;
+}
+
+/* Send button */
+#chat-submit {
+  background: linear-gradient(90deg, var(--gradient-start), var(--gradient-end)) !important;
+  color: var(--text-dark) !important;
+  border: none !important;
+  transition: all var(--transition-speed) ease !important;
+  box-shadow: 0 2px 5px rgba(var(--primary-yellow-rgb), 0.3) !important;
+}
+
+#chat-submit:hover {
+  background: linear-gradient(90deg, var(--hover-yellow), var(--primary-yellow-dark)) !important;
+  transform: translateY(-2px) !important;
+  box-shadow: 0 4px 8px rgba(var(--primary-yellow-rgb), 0.4) !important;
+}
+
+#chat-submit svg {
+  color: var(--text-dark) !important;
+}
+
+/* Hide watermark */
+.watermark {
+  display: none !important;
+}
+
+/* Responsive styling */
+@media (max-width: 768px) {
+  .flex.flex-col.mx-auto.w-full.flex-grow.p-4 {
+    width: 95vw !important;
+    padding: 12px 8px 8px 8px !important;
+    min-height: 120px;
+    max-width: 100vw !important;
+    border-radius: 20px;
+  }
+  
+  .ai-message .prose,
+  [data-step-type="user_message"] .prose {
+    max-width: 90%;
+    padding: 12px 16px;
+  }
+  
+  .leading-7 {
+    font-size: 0.95rem;
+  }
+  
+  #message-composer {
+    padding: 0.5rem !important;
+  }
+}
+
+/* Animation for entry */
+@keyframes fade-in {
+  from {
+    opacity: 0;
+    transform: translateY(20px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* Apply animation to elements on page load */
+.step.py-2 {
+  animation: fade-in 0.3s ease-out forwards;
+  animation-delay: calc(var(--index, 0) * 120ms);
+}
+
+header, #header {
+  position: relative;
+  z-index: 100 !important;
+}
+
+/* Make avatars bigger and closer to the bubble */
+
+.ai-message .inline-block > .relative,
+[data-step-type="user_message"] .inline-block > .relative {
+  width: 60px !important;
+  height: 60px !important;
+  margin-top: 0 !important; /* Remove vertical offset */
+}
+
+.ai-message .inline-block > .relative img,
+[data-step-type="user_message"] .inline-block > .relative img {
+  width: 100% !important;
+  height: 100% !important;
+  object-fit: cover !important;
+}
+
+.ai-message.flex.gap-4,
+[data-step-type="user_message"] .flex.gap-4 {
+  gap: 0.75rem !important; /* Reduce gap between avatar and bubble */
+}
+
+/* ====== STYLING FOR REASONING SECTIONS (DETAILS/SUMMARY) ====== */
+
+/* Style for details elements (collapsible containers) */
+.prose details {
+  margin: 0.75rem 0;
+  border-radius: var(--border-radius-md);
+  border: 1px solid rgba(75, 85, 99, 0.4);
+  background: rgba(20, 20, 30, 0.3);
+  overflow: hidden;
+  transition: all var(--transition-speed) ease;
+}
+
+/* Add hover effect to details */
+.prose details:hover {
+  border-color: rgba(var(--primary-yellow-rgb), 0.3);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
+}
+
+/* Style the summary element (clickable header) */
+.prose summary {
+  padding: 10px 16px;
+  cursor: pointer;
+  background: linear-gradient(90deg, 
+    rgba(var(--primary-yellow-rgb), 0.15), 
+    rgba(var(--primary-yellow-rgb), 0.05));
+  font-weight: 500;
+  color: var(--primary-yellow);
+  border-bottom: 1px solid transparent;
+  transition: all var(--transition-speed) ease;
+  display: flex;
+  align-items: center;
+  outline: none;
+}
+
+/* Style summary hover state */
+.prose summary:hover {
+  background: linear-gradient(90deg, 
+    rgba(var(--primary-yellow-rgb), 0.2), 
+    rgba(var(--primary-yellow-rgb), 0.08));
+}
+
+/* Add arrow indicator to summary */
+.prose summary::before {
+  content: '▶';
+  font-size: 0.7em;
+  margin-right: 10px;
+  transition: transform var(--transition-speed) ease;
+}
+
+/* Rotate arrow when details is open */
+.prose details[open] summary::before {
+  transform: rotate(90deg);
+}
+
+/* Style the content inside details when open */
+.prose details[open] summary {
+  border-bottom: 1px solid rgba(var(--primary-yellow-rgb), 0.2);
+}
+
+.prose details > *:not(summary) {
+  padding: 16px;
+  opacity: 0;
+  animation: fadeInContent var(--transition-speed-med) forwards;
+}
+
+/* Animation for content appearing when details is opened */
+@keyframes fadeInContent {
+  from {
+    opacity: 0;
+    transform: translateY(-10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* Remove default details marker in webkit browsers */
+.prose summary::-webkit-details-marker {
+  display: none;
+}
+
+/* Tag styling */
+[data-tag] {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 12px;
+  font-size: 0.7em;
+  font-weight: 500;
+  margin-right: 5px;
+  margin-bottom: 5px;
+}
+
+[data-tag="reasoning"] {
+  background-color: rgba(var(--accent-purple-rgb, 139, 92, 246), 0.2);
+  color: rgb(167, 139, 250);
+  border: 1px solid rgba(167, 139, 250, 0.3);
+}
+
+[data-tag="tool-action"] {
+  background-color: rgba(var(--primary-yellow-rgb), 0.2);
+  color: var(--primary-yellow);
+  border: 1px solid rgba(var(--primary-yellow-rgb), 0.3);
+}
+
+[data-tag="tool-result"] {
+  background-color: rgba(var(--accent-blue-rgb), 0.2);
+  color: rgb(147, 197, 253);
+  border: 1px solid rgba(147, 197, 253, 0.3);
+}
+
+[data-tag="summary"] {
+  background-color: rgba(16, 185, 129, 0.2);
+  color: rgb(110, 231, 183);
+  border: 1px solid rgba(110, 231, 183, 0.3);
+}
+
+#readme-button, #theme-toggle {
+  display: none;
+}

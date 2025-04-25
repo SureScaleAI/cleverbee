@@ -1,0 +1,53 @@
+/* Custom styles for Chainlit action buttons */
+
+/* Base button styles */
+.cl-action-button {
+  transition: all 0.2s ease-in-out;
+  border-radius: 8px !important;
+  font-weight: 500 !important;
+  box-shadow: 0 2px 5px rgba(0, 0, 0, 0.1) !important;
+}
+
+/* Summary button - light style */
+[name="use_summary"] {
+  background-color: #f0f7ff !important;
+  color: #2563eb !important;
+  border: 1px solid #bfdbfe !important;
+}
+
+[name="use_summary"]:hover {
+  background-color: #dbeafe !important;
+  transform: translateY(-2px);
+  box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1) !important;
+}
+
+/* Full content button - more prominent */
+[name="use_full_content"] {
+  background-color: #1e40af !important;
+  color: white !important;
+  border: 1px solid #1e3a8a !important;
+}
+
+[name="use_full_content"]:hover {
+  background-color: #1e3a8a !important;
+  transform: translateY(-2px);
+  box-shadow: 0 4px 8px rgba(37, 99, 235, 0.3) !important;
+}
+
+/* Button container */
+.cl-actions-container {
+  display: flex;
+  gap: 12px;
+  margin-top: 12px;
+}
+
+/* Button icons */
+.cl-action-button .MuiButton-startIcon {
+  margin-right: 8px !important;
+}
+
+/* Disabled state */
+.cl-action-button.Mui-disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+} 

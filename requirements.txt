@@ -1,0 +1,49 @@
+# Main LLM API clients
+anthropic==0.50.0
+google-generativeai==0.8.5
+
+# Web UI and interface
+chainlit==2.5.5
+
+# Web browsing and content extraction
+playwright>=1.51.0  # Always use latest version
+patchright>=1.51.0  # Always use latest undetected Playwright version
+beautifulsoup4==4.13.0
+html2text==2025.4.15
+lxml==5.4.0
+lxml-html-clean==0.4.2
+markdownify==0.11.6
+readability-lxml==0.8.1
+
+# Document processing
+pymupdf==1.23.8  # PDF processing library
+
+# LangChain ecosystem
+langchain==0.3.24
+langchain-anthropic==0.3.12
+langchain-google-genai==2.0.10
+langchain-community==0.3.22
+langchain-core==0.3.55
+langchain-text-splitters==0.3.8
+langchain-mcp-adapters==0.0.9
+
+# Optional LangChain for local models (uncomment if using local LLMs)
+# langchain-huggingface>=0.1.0
+
+# MCP (Model Context Protocol) tools
+mcp==1.6.0
+pubmedmcp>=0.1.3  # Updated PubMed MCP client
+
+# Local models support (will be installed with correct flags in setup.sh)
+# llama-cpp-python
+
+# Configuration and utilities
+python-dotenv==1.1.0
+pydantic==2.11.3
+pydantic-settings==2.9.1
+pyyaml==6.0.2
+
+# Optional ML features (used for both cloud and local LLMs)
+# These are core data processing libraries used throughout the application
+numpy==2.1.1
+pandas==2.2.3

@@ -1,0 +1,46 @@
+# CleverBee Configuration
+
+# --- Model Configuration --- #
+# Choose the main LLM provider for core tasks (e.g., reasoning, final report)
+MAIN_LLM_PROVIDER: "gemini"  # Options: "claude", "gemini"
+
+# Claude model settings
+CLAUDE_MODEL_NAME: "claude-3-7-sonnet-20250219"  # Claude 3.7 offers better reasoning and tool usage
+
+# Gemini model settings
+GEMINI_SUMMARY_MODEL_NAME: "gemini-2.0-flash"  # Default model for summarization (Updated)
+GEMINI_SUMMARY_COST_PER_1K_INPUT: 0.000075  # Pricing for the summary model (e.g., 1.5 Flash)
+GEMINI_SUMMARY_COST_PER_1K_OUTPUT: 0.00030 # Pricing for the summary model (e.g., 1.5 Flash)
+GEMINI_MODEL_NAME: "gemini-2.5-pro-preview-03-25"  # Main model (Updated - user can override in config.yaml)
+SUMMARY_MAX_TOKENS: 4000  # Maximum tokens for summaries
+
+# --- Content Management Settings --- #
+USE_PROGRESSIVE_LOADING: true
+MAX_CONTENT_PREVIEW_TOKENS: 1000
+
+# --- CAPTCHA Settings --- #
+USE_CAPTCHA_SOLVER: true  # Whether to use automatic CAPTCHA solving
+CAPTCHA_SOLVER_TIMEOUT: 2000  # Timeout for CAPTCHA solver in milliseconds
+
+# --- Agent Configuration --- #
+# Search result configuration
+MIN_RESULTS_PER_SEARCH_PAGE: 1  # Minimum pages per search
+MAX_RESULTS_PER_SEARCH_PAGE: 10  # Maximum results per search page
+
+# --- Playwright/Browser Settings --- #
+# Timeout in milliseconds for navigation
+BROWSER_NAVIGATION_TIMEOUT: 15000  # 15 seconds default timeout
+
+# Path to store browser state (cookies, local storage) for persistence
+STORAGE_STATE_PATH: "browser_state.json"  # Set to null or empty to disable persistence
+
+# --- Logging --- #
+LOG_LEVEL: "INFO"  # Logging level: DEBUG, INFO, WARNING, ERROR, CRITICAL
+
+# --- Token Usage and Cost Tracking --- #
+TRACK_TOKEN_USAGE: true  # Whether to track token usage
+CLAUDE_COST_PER_1K_INPUT_TOKENS: 0.008  # Cost per 1K input tokens for Claude
+CLAUDE_COST_PER_1K_OUTPUT_TOKENS: 0.024  # Cost per 1K output tokens for Claude
+GEMINI_COST_PER_1K_INPUT_TOKENS: 0.00035  # Cost per 1K input tokens for Gemini
+GEMINI_COST_PER_1K_OUTPUT_TOKENS: 0.0007  # Cost per 1K output tokens for Gemini
+LOG_COST_SUMMARY: true  # Whether to log cost summary after each session

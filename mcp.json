@@ -1,0 +1,26 @@
+{
+  "mcpServers": {
+    "youtube-transcript": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "@sinco-lab/mcp-youtube-transcript"
+      ],
+      "minToolCalls": 0,
+      "maxToolCalls": 3,
+      "description": "YouTube video transcripts."
+    },
+    "pubmedmcp": {
+      "command": "uvx",
+      "args": ["pubmedmcp@latest"],
+      "minToolCalls": 0,
+      "maxToolCalls": 5,
+      "description": "Search PubMed papers and retrieve metadata/abstracts using the PubMed E-utilities API.",
+      "timeout": 20,
+      "env": {
+        "UV_PRERELEASE": "allow",
+        "UV_PYTHON": "3.12"
+      }
+    }
+  }
+}

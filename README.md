@@ -8,7 +8,7 @@
 
 <p align="center">
   <a href="https://cleverb.ee">Website</a> •
-  <a href="https://cleverb.ee">Documentation</a> •
+  <a href="https://cleverb.ee/docs">Documentation</a> •
   <a href="https://github.com/SureScaleAI/cleverbee">GitHub</a>
 </p>
 
@@ -53,11 +53,11 @@ bash run.sh
 
 ## 📚 Documentation
 
-For full documentation, visit our website: [https://cleverb.ee](https://cleverb.ee)
+For full documentation, visit our website: [https://cleverb.ee/docs](https://cleverb.ee/docs)
 
 ## 📝 Configuration
 
-All major configuration is handled in `config.yaml`. See the [documentation](https://cleverb.ee) for detailed configuration options.
+All major configuration is handled in `config.yaml`. See the [documentation](https://cleverb.ee/docs) for detailed configuration options.
 
 ## 📄 License
 

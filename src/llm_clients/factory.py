@@ -2,12 +2,17 @@ import logging
 import os
 from typing import Optional, List, Literal, Union, Dict, Any
 from pathlib import Path
+import time
+import random
+import asyncio
 
 # LangChain component imports
 from langchain_anthropic import ChatAnthropic
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.callbacks import BaseCallbackHandler
+from langchain_core.messages import BaseMessage
+from langchain_core.outputs import ChatGeneration, ChatResult
 
 # Import for HuggingFace models - make these conditional so they're only imported when needed
 # HuggingFace imports will be done conditionally when provider == "local"
@@ -22,6 +27,309 @@ logger = logging.getLogger(__name__)
 
 ProviderType = Literal["claude", "gemini", "local"]
 
+# Add a RetryingLLM class that wraps any LLM with retry functionality
+class RetryingLLM(BaseChatModel):
+    """A wrapper around any LLM that adds retry functionality.
+    
+    This class intercepts LLM calls and implements exponential backoff retry
+    logic for transient errors.
+    """
+    
+    def __init__(
+        self,
+        llm: BaseChatModel,
+        max_retries: int = 3,
+        initial_delay: float = 1.0,
+        exponential_base: float = 2.0,
+        jitter: bool = True,
+        max_delay: float = 60.0,
+        errors_to_retry: Optional[List[str]] = None
+    ):
+        """Initialize the RetryingLLM.
+        
+        Args:
+            llm: The base LLM to wrap
+            max_retries: Maximum number of retries before giving up
+            initial_delay: Initial delay between retries in seconds
+            exponential_base: Base for exponential backoff
+            jitter: Whether to add random jitter to delay
+            max_delay: Maximum delay between retries
+            errors_to_retry: List of error message substrings to retry on
+        """
+        self.llm = llm
+        self.max_retries = max_retries
+        self.initial_delay = initial_delay
+        self.exponential_base = exponential_base
+        self.jitter = jitter
+        self.max_delay = max_delay
+        
+        # Default errors to retry on
+        self.errors_to_retry = errors_to_retry or [
+            # Standard rate limiting errors
+            "Rate limit",
+            "rate limit",
+            "429",
+            "too many requests",
+            "Too many requests",
+            
+            # Connection and timeout errors
+            "timeout",
+            "Timeout",
+            "connection",
+            "Connection",
+            
+            # Server errors 
+            "server error",
+            "Server error",
+            "503",
+            "502",
+            "500",
+            "internal error",
+            "Internal error",
+            
+            # Gemini-specific errors
+            "contents.parts must not be empty",  # Gemini-specific error
+            "GenerateContentRequest.contents",   # Gemini-specific error
+            "Invalid argument provided to Gemini", # Gemini general error
+            
+            # General availability issues
+            "temporarily unavailable",
+            "Please try again",
+            "try again later"
+        ]
+        
+    @property
+    def _llm_type(self) -> str:
+        """Return the type of this LLM."""
+        wrapped_type = getattr(self.llm, "_llm_type", "unknown")
+        return f"Retrying{wrapped_type}"
+
+    @property
+    def model_name(self) -> str:
+        """Return the model name of the wrapped LLM."""
+        if hasattr(self.llm, "model_name"):
+            return self.llm.model_name
+        elif hasattr(self.llm, "model"):
+            return self.llm.model
+        return "unknown"
+
+    @property
+    def _identifying_params(self) -> Dict[str, Any]:
+        """Return identifying parameters of the wrapped LLM."""
+        params = {"wrapped_llm": self.llm._identifying_params} if hasattr(self.llm, "_identifying_params") else {}
+        params.update({
+            "max_retries": self.max_retries,
+            "initial_delay": self.initial_delay,
+            "exponential_base": self.exponential_base,
+            "jitter": self.jitter
+        })
+        return params
+    
+    def _should_retry(self, error: Exception) -> bool:
+        """Determine if an error should trigger a retry.
+        
+        Args:
+            error: The exception that was raised
+            
+        Returns:
+            Whether to retry the operation
+        """
+        error_str = str(error)
+        return any(err_type in error_str for err_type in self.errors_to_retry)
+    
+    def _get_retry_delay(self, attempt: int) -> float:
+        """Get the delay before the next retry.
+        
+        Args:
+            attempt: The retry attempt number (0-based)
+            
+        Returns:
+            Delay in seconds
+        """
+        delay = min(
+            self.initial_delay * (self.exponential_base ** attempt),
+            self.max_delay
+        )
+        if self.jitter:
+            delay = delay * (0.5 + random.random())
+        return delay
+    
+    async def _agenerate(
+        self, 
+        messages: List[BaseMessage], 
+        stop: Optional[List[str]] = None,
+        run_manager = None,
+        **kwargs
+    ) -> ChatResult:
+        """Wrap the LLM's _agenerate method with retry logic."""
+        attempt = 0
+        last_error = None
+        
+        while attempt <= self.max_retries:
+            try:
+                if attempt > 0:
+                    logger.warning(f"Retry attempt {attempt}/{self.max_retries} for {self.model_name}...")
+                    
+                # Call the wrapped LLM
+                if hasattr(self.llm, '_agenerate'):
+                    return await self.llm._agenerate(
+                        messages=messages, 
+                        stop=stop,
+                        run_manager=run_manager,
+                        **kwargs
+                    )
+                else:
+                    # Fallback for LLMs that don't implement _agenerate
+                    logger.warning(f"LLM {self.model_name} doesn't implement _agenerate, using generate instead")
+                    return await self.llm.agenerate([messages], stop=stop, run_manager=run_manager, **kwargs)
+                
+            except Exception as e:
+                last_error = e
+                
+                # Check if we should retry
+                if attempt < self.max_retries and self._should_retry(e):
+                    delay = self._get_retry_delay(attempt)
+                    logger.warning(
+                        f"LLM call to {self.model_name} failed with error: {e}. "
+                        f"Retrying in {delay:.2f}s (attempt {attempt+1}/{self.max_retries})"
+                    )
+                    await asyncio.sleep(delay)
+                    attempt += 1
+                else:
+                    logger.error(
+                        f"LLM call to {self.model_name} failed: {e}. "
+                        f"No more retries (attempt {attempt+1}/{self.max_retries})"
+                    )
+                    raise
+        
+        # We shouldn't get here, but if we do, raise the last error
+        raise last_error
+
+    def _generate(
+        self, 
+        messages: List[BaseMessage], 
+        stop: Optional[List[str]] = None,
+        run_manager = None,
+        **kwargs
+    ) -> ChatResult:
+        """Wrap the LLM's _generate method with retry logic."""
+        attempt = 0
+        last_error = None
+        
+        while attempt <= self.max_retries:
+            try:
+                if attempt > 0:
+                    logger.warning(f"Retry attempt {attempt}/{self.max_retries} for {self.model_name}...")
+                    
+                # Call the wrapped LLM
+                if hasattr(self.llm, '_generate'):
+                    return self.llm._generate(
+                        messages=messages, 
+                        stop=stop,
+                        run_manager=run_manager,
+                        **kwargs
+                    )
+                else:
+                    # Fallback for LLMs that don't implement _generate
+                    logger.warning(f"LLM {self.model_name} doesn't implement _generate, using generate instead")
+                    return self.llm.generate([messages], stop=stop, run_manager=run_manager, **kwargs)
+                
+            except Exception as e:
+                last_error = e
+                
+                # Check if we should retry
+                if attempt < self.max_retries and self._should_retry(e):
+                    delay = self._get_retry_delay(attempt)
+                    logger.warning(
+                        f"LLM call to {self.model_name} failed with error: {e}. "
+                        f"Retrying in {delay:.2f}s (attempt {attempt+1}/{self.max_retries})"
+                    )
+                    time.sleep(delay)
+                    attempt += 1
+                else:
+                    logger.error(
+                        f"LLM call to {self.model_name} failed: {e}. "
+                        f"No more retries (attempt {attempt+1}/{self.max_retries})"
+                    )
+                    raise
+        
+        # We shouldn't get here, but if we do, raise the last error
+        raise last_error
+
+    # Make sure callbacks are properly passed through
+    @property
+    def callbacks(self):
+        """Get the callbacks from the wrapped LLM."""
+        return self.llm.callbacks if hasattr(self.llm, "callbacks") else None
+    
+    @callbacks.setter
+    def callbacks(self, callbacks):
+        """Set callbacks on the wrapped LLM."""
+        if hasattr(self.llm, "callbacks"):
+            self.llm.callbacks = callbacks
+            
+    # Forward verbose and other common properties
+    @property
+    def verbose(self):
+        """Get the verbose setting from the wrapped LLM."""
+        return self.llm.verbose if hasattr(self.llm, "verbose") else False
+    
+    @verbose.setter
+    def verbose(self, verbose):
+        """Set verbose on the wrapped LLM."""
+        if hasattr(self.llm, "verbose"):
+            self.llm.verbose = verbose
+
+    # Forward tags
+    @property
+    def tags(self):
+        """Get tags from the wrapped LLM."""
+        return self.llm.tags if hasattr(self.llm, "tags") else None
+    
+    @tags.setter
+    def tags(self, tags):
+        """Set tags on the wrapped LLM."""
+        if hasattr(self.llm, "tags"):
+            self.llm.tags = tags
+            
+    # Forward metadata
+    @property
+    def metadata(self):
+        """Get metadata from the wrapped LLM."""
+        return self.llm.metadata if hasattr(self.llm, "metadata") else None
+    
+    @metadata.setter
+    def metadata(self, metadata):
+        """Set metadata on the wrapped LLM."""
+        if hasattr(self.llm, "metadata"):
+            self.llm.metadata = metadata
+            
+    # Required by BaseChatModel abstract class
+    @property
+    def client(self):
+        """Get the client from the wrapped LLM."""
+        return self.llm.client if hasattr(self.llm, "client") else None
+    
+    def get_num_tokens(self, text: str) -> int:
+        """Get the number of tokens in the text."""
+        if hasattr(self.llm, "get_num_tokens"):
+            return self.llm.get_num_tokens(text)
+        # Default tokenizer estimation as fallback (very rough)
+        return len(text) // 4
+    
+    def get_num_tokens_from_messages(self, messages) -> int:
+        """Get the number of tokens in the messages."""
+        if hasattr(self.llm, "get_num_tokens_from_messages"):
+            return self.llm.get_num_tokens_from_messages(messages)
+        # Fallback: sum tokens from all message contents
+        total = 0
+        for message in messages:
+            if hasattr(message, "content"):
+                content = message.content
+                if isinstance(content, str):
+                    total += self.get_num_tokens(content)
+        return total
+
 def get_llm_client(
     provider: ProviderType,
     model_name: Optional[str] = None,
@@ -31,7 +339,9 @@ def get_llm_client(
     is_next_step_client: bool = False, # <<< ADDED FLAG
     is_local_client: bool = False, # Flag for local HuggingFace models
     content_size: Optional[int] = None, # Content size to determine if model is suitable
-    callbacks: Optional[List[BaseCallbackHandler]] = None  # Add back callbacks parameter
+    callbacks: Optional[List[BaseCallbackHandler]] = None,  # Add back callbacks parameter
+    use_retry_wrapper: bool = True,  # New parameter to control retry wrapper
+    max_retries: int = 3  # New parameter for max retries
 ) -> BaseChatModel:
     """Factory function to create and return a LangChain chat model client.
 
@@ -45,6 +355,8 @@ def get_llm_client(
         is_local_client: Flag to indicate if using a local HuggingFace model.
         content_size: Size of content to be processed (in tokens) - used to check if model is suitable.
         callbacks: Optional list of callback handlers to attach to the client.
+        use_retry_wrapper: Whether to wrap the client with retry functionality.
+        max_retries: Maximum number of retries for the retry wrapper.
 
     Returns:
         An instance of a LangChain BaseChatModel (e.g., ChatAnthropic, ChatGoogleGenerativeAI).
@@ -64,6 +376,9 @@ def get_llm_client(
         tags = ["primary"]
     # <<< END MODIFIED TAG LOGIC >>>
 
+    # Create the base LLM client
+    llm_client = None
+
     if provider == "claude":
         # Determine parameters for Claude
         final_api_key = api_key or os.getenv("ANTHROPIC_API_KEY") or config.settings.ANTHROPIC_API_KEY
@@ -78,15 +393,14 @@ def get_llm_client(
              logger.warning(f"Claude model name not specified, defaulting to {final_model_name}")
 
         try:
-            client = ChatAnthropic(
+            llm_client = ChatAnthropic(
                 anthropic_api_key=final_api_key,
                 model_name=final_model_name,
                 max_tokens=final_max_tokens,
                 callbacks=callbacks,  # Add callbacks
                 tags=tags # <<< USE UPDATED TAGS >>>
             )
-            logger.info(f"Successfully created ChatAnthropic client for model: {final_model_name} with tags: {client.tags}")
-            return client
+            logger.info(f"Successfully created ChatAnthropic client for model: {final_model_name} with tags: {llm_client.tags}")
         except Exception as e:
             logger.error(f"Failed to initialize ChatAnthropic client: {e}", exc_info=True)
             raise RuntimeError(f"Failed to initialize ChatAnthropic client: {e}")
@@ -117,7 +431,7 @@ def get_llm_client(
         try:
             # <<< ADD DEBUG LOGGING >>>
             logger.debug(f"Attempting to create ChatGoogleGenerativeAI client with model='{final_model_name}', tags={tags}") # Log tags too
-            client = ChatGoogleGenerativeAI(
+            llm_client = ChatGoogleGenerativeAI(
                 google_api_key=final_api_key,
                 model=final_model_name,
                 max_output_tokens=final_max_tokens,
@@ -128,8 +442,7 @@ def get_llm_client(
                 metadata={"usage_metadata": True},  # Enable proper token usage tracking
                 tags=tags # <<< USE UPDATED TAGS >>>
             )
-            logger.info(f"Successfully created ChatGoogleGenerativeAI client for model: {final_model_name} with tags: {client.tags}")
-            return client
+            logger.info(f"Successfully created ChatGoogleGenerativeAI client for model: {final_model_name} with tags: {llm_client.tags}")
         except Exception as e:
             logger.error(f"Failed to initialize ChatGoogleGenerativeAI client: {e}", exc_info=True)
             raise RuntimeError(f"Failed to initialize ChatGoogleGenerativeAI client: {e}")
@@ -197,7 +510,7 @@ def get_llm_client(
             n_gpu_layers = config.settings.N_GPU_LAYERS # Default: -1 in settings
 
             # Create the LlamaCpp instance
-            llm = LlamaCpp(
+            llm_client = LlamaCpp(
                 model_path=str(model_path),
                 n_ctx=default_n_ctx,  # Use the default n_ctx value here
                 n_batch=512,  # Adjust based on VRAM/performance
@@ -210,10 +523,8 @@ def get_llm_client(
                 grammar_path=None,  # Can add tool grammar here for local models if needed
                 tags=tags # <<< USE UPDATED TAGS >>>
             )
-            logger.info(f"Successfully created LlamaCpp client for model: {selected_model} with tags: {llm.tags}")
-            logger.info(f" LlamaCpp Params: n_ctx={llm.n_ctx}, n_gpu_layers={llm.n_gpu_layers}, max_tokens={llm.max_tokens}")
-            return llm
-
+            logger.info(f"Successfully created LlamaCpp client for model: {selected_model} with tags: {llm_client.tags}")
+            logger.info(f" LlamaCpp Params: n_ctx={llm_client.n_ctx}, n_gpu_layers={llm_client.n_gpu_layers}, max_tokens={llm_client.max_tokens}")
         except Exception as e:
             logger.error(f"Failed to initialize LlamaCpp client for {selected_model}: {e}", exc_info=True)
             # Provide more specific guidance if possible (e.g., build issues)
@@ -222,39 +533,16 @@ def get_llm_client(
                  error_msg += "\\n -> This might indicate an issue with the llama-cpp-python build or GPU driver setup. Ensure CMake and necessary GPU SDKs were present during installation (see setup.sh)."
             raise RuntimeError(error_msg)
 
-        # --- REMOVE Old HuggingFace Pipeline Logic ---
-        # try:
-        #     from transformers import AutoTokenizer, AutoModelForCausalLM, pipeline
-        #     import torch
-        #     model_config = get_local_model_config(selected_model)
-        #     final_max_tokens = max_tokens or model_config.get("max_tokens", 1024)
-        #     # ... rest of the old tokenizer/model/pipeline setup ...
-        #     hf_pipeline = pipeline(...)
-        #     # Use the correct ChatHuggingFace wrapper if sticking with pipeline
-        #     # For pipeline objects, use langchain_community.llms.HuggingFacePipeline
-        #     # For using AutoModelForCausalLM directly with Chat wrapper, use langchain_community.chat_models.ChatHuggingFace
-        #     llm = HuggingFacePipeline(pipeline=hf_pipeline) # Example if using pipeline directly
-        #     # If using Chat Wrapper with AutoModel:
-        #     # model = AutoModelForCausalLM.from_pretrained(...)
-        #     # tokenizer = AutoTokenizer.from_pretrained(...)
-        #     # llm = CommunityChatHuggingFace(llm=model, tokenizer=tokenizer) # Requires different setup
-        #     # logger.info(f"Successfully created HuggingFace local client for model: {selected_model}")
-        #     # Need to wrap the LLM in a ChatModel interface if using HuggingFacePipeline directly
-        #     # This is complex; LlamaCpp is preferred for GGUF.
-        #     # If you *must* use HF pipeline, you might need a custom Chat wrapper or use newer integrations.
-        #     # For now, raise NotImplementedError as LlamaCpp is the target.
-        #     raise NotImplementedError("HuggingFace Pipeline loading for local models is deprecated in favor of LlamaCpp for GGUF.")
-        # except ImportError as ie:\
-        #     logger.error(f"Missing HuggingFace transformers library. Please install it: pip install transformers torch", exc_info=True)\
-        #     raise RuntimeError("Missing HuggingFace transformers library for local models.") from ie\
-        # except Exception as e:\
-        #     logger.error(f"Failed to initialize HuggingFace local client for {selected_model}: {e}", exc_info=True)\
-        #     raise RuntimeError(f"Failed to initialize HuggingFace local client: {e}")
-
-    else:
-        # Unsupported provider
-        logger.error(f"Unsupported LLM provider: {provider}")
-        raise ValueError(f"Unsupported LLM provider: {provider}. Choose from 'claude', 'gemini', or 'local'.")
+    # Wrap with retry functionality if requested
+    if use_retry_wrapper and llm_client is not None:
+        try:
+            logger.info(f"Wrapping LLM client with retry functionality (max_retries={max_retries})")
+            llm_client = RetryingLLM(llm_client, max_retries=max_retries)
+        except Exception as e:
+            logger.warning(f"Failed to initialize RetryingLLM wrapper: {e}. Using base LLM client without retry functionality.")
+            # Continue with the unwrapped client
+        
+    return llm_client
 
 def get_local_model_config(model_name: str) -> Dict[str, Any]:
     """Get configuration for specific local models.

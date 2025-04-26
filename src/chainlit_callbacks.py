@@ -404,7 +404,26 @@ class ChainlitCallbackHandler(AsyncCallbackHandler):
     ) -> None:
         """Called when an LLM call errors. Updates the user with an error message."""
         step_info = self.current_steps.get(str(run_id)) # Get stored dict
-        logger.error(f"LLM Error (run_id: {run_id}): {error}", exc_info=self._log_traceback) # Conditional traceback
+        
+        # Enhanced error logging with details about the error type and message
+        error_type = type(error).__name__
+        error_message = str(error)
+        logger.error(f"LLM Error (run_id: {run_id}): {error_type} - {error_message}", exc_info=self._log_traceback)
+        
+        # Log additional diagnostic information that might be in kwargs
+        if 'metadata' in kwargs and kwargs['metadata']:
+            logger.error(f"Error metadata: {kwargs['metadata']}")
+        
+        # Check if we can retry the error based on its type/message
+        retryable_error = any(err in error_message for err in [
+            "Rate limit", "timeout", "connection", "server error",
+            "contents.parts must not be empty", "GenerateContentRequest.contents",
+            "Invalid argument provided to Gemini"
+        ])
+        
+        retry_suggestion = ""
+        if retryable_error:
+            retry_suggestion = " This appears to be a temporary error. You may want to try again."
         
         if step_info:
             thinking_msg = step_info.get("step") # This is now a message
@@ -417,18 +436,17 @@ class ChainlitCallbackHandler(AsyncCallbackHandler):
             except Exception as e:
                 logger.warning(f"Failed to remove thinking message for errored {run_id}: {e}")
             
-            # Send an error message with the proper author
+            # Send an error message with the proper author - FIXED: removed is_error parameter
             await cl.Message(
-                content=f"⚠️ Error: {error}",
-                author=author,
-                is_error=True
+                content=f"⚠️ Error: {error_message}{retry_suggestion}",
+                author=author
             ).send()
             
             # Remove from tracking
             self.current_steps.pop(str(run_id), None)
         else:
             # Error occurred but no step was found (should be rare)
-            await cl.ErrorMessage(content=f"LLM Error: {error}").send()
+            await cl.ErrorMessage(content=f"LLM Error: {error_message}{retry_suggestion}").send()
 
     async def on_tool_start(
         self,

@@ -243,16 +243,17 @@ class ResearcherAgent:
                 model_name=NEXT_STEP_MODEL, # Use the specific config setting
                 is_summary_client=False, # It's not for summarization
                 is_next_step_client=True, # Specify this is the next step client
-                callbacks=self.callbacks # Pass callbacks for tracking
+                callbacks=self.callbacks, # Pass callbacks for tracking
+                use_retry_wrapper=True,  # Add retry functionality
+                max_retries=3  # Set maximum retries to 3
             )
             logger.info(f"Initialized Next Step LLM: {NEXT_STEP_MODEL}")
             if not self.next_step_llm:
                 raise RuntimeError("Next Step LLM object is None after initialization.")
         except Exception as e:
-            logger.error(f"Failed to initialize Next Step LLM ({NEXT_STEP_MODEL}): {e}")
-            logger.warning("Falling back to using primary LLM client for next steps.")
-            # Fallback to the primary client if initialization fails
-            self.next_step_llm = self.llm_client 
+            # Fallback to primary LLM if next step LLM initialization fails
+            logger.error(f"Failed to initialize Next Step LLM: {e}. Falling back to primary LLM.")
+            self.next_step_llm = self.llm_client  # Fallback to primary LLM
         # --- End Next Step LLM initialization ---
         
         # Initialize the summarization LLM
@@ -957,6 +958,11 @@ class ResearcherAgent:
             
         except Exception as e:
             logger.error(f"Error in run_research: {e}", exc_info=True)
+            # Ensure accumulated content is preserved even in case of failure
+            # If _run_research_core was called and set _current_accumulated_content, it will already be set
+            # If the error happened before _run_research_core was called, set it to a default error message
+            if not self._current_accumulated_content:
+                self._current_accumulated_content = f"Error occurred during research initialization: {str(e)}"
             return f"Error occurred during research: {str(e)}"
             
         finally:
@@ -2345,6 +2351,9 @@ class ResearcherAgent:
                     # Standard error logging
                     logger.error(f"Error during action iteration LLM call {iteration + 1}: {error_type} - {error_msg}", exc_info=_log_traceback)
                 
+                # Store accumulated content for later access before failing
+                self._current_accumulated_content = accumulated_content
+                
                 # Stop processing immediately if the LLM call itself fails
                 return f"Research failed due to error in LLM action call: {error_msg}"
 
@@ -2389,6 +2398,7 @@ class ResearcherAgent:
         1. First message must be a HumanMessage
         2. Function calls must be immediately followed by function responses
         3. No consecutive function calls or responses
+        4. No empty message content parts (to prevent Gemini's "contents.parts must not be empty" error)
         """
         if not history:
             # If history is empty, just return a HumanMessage with the topic
@@ -2407,6 +2417,12 @@ class ResearcherAgent:
         
         for i in range(1, len(history)):
             msg = history[i]
+            
+            # CRITICAL: Skip any message with empty content to prevent Gemini errors
+            if self._has_empty_content(msg):
+                logger.warning(f"Skipping message at index {i} with empty content or empty parts.")
+                continue
+                
             is_ai_message = isinstance(msg, AIMessage)
             has_explicit_tool_calls = is_ai_message and getattr(msg, 'tool_calls', None)
             has_embedded_tool_call = False
@@ -2422,6 +2438,12 @@ class ResearcherAgent:
 
             # --- Logic for adding AIMessage --- 
             if is_ai_message:
+                # Ensure message doesn't have empty parts before adding
+                cleaned_msg = self._ensure_valid_content(msg)
+                if cleaned_msg is None:
+                    logger.warning(f"Skipping AIMessage at index {i} - content couldn't be sanitized.")
+                    continue
+                    
                 # Condition to add: Previous message must allow an AI message to follow
                 # (e.g., Human message, or Tool message if the previous AI message requested tools)
                 can_follow_previous = isinstance(sanitized_history[-1], (HumanMessage, ToolMessage))
@@ -2430,7 +2452,7 @@ class ResearcherAgent:
                 # in the *original* history should ideally be Human or an AI message without tool calls.
                 # However, the primary rule is the sequence in the sanitized list.
                 if can_follow_previous:
-                    sanitized_history.append(msg)
+                    sanitized_history.append(cleaned_msg)
                     # Set flag if this message contains/implies tool calls, needed for next step (ToolMessage)
                     tool_messages_added = has_explicit_tool_calls or has_embedded_tool_call
                 else:
@@ -2438,6 +2460,12 @@ class ResearcherAgent:
                      
             # --- Logic for adding ToolMessage --- 
             elif isinstance(msg, ToolMessage):
+                # Ensure message doesn't have empty parts before adding
+                cleaned_msg = self._ensure_valid_content(msg)
+                if cleaned_msg is None:
+                    logger.warning(f"Skipping ToolMessage at index {i} - content couldn't be sanitized.")
+                    continue
+                    
                 # Condition to add: Must follow an AIMessage that had/implied tool calls
                 previous_was_ai_with_tools = False
                 if isinstance(sanitized_history[-1], AIMessage):
@@ -2451,23 +2479,44 @@ class ResearcherAgent:
                     )
                     
                 if previous_was_ai_with_tools:
-                    sanitized_history.append(msg)
+                    sanitized_history.append(cleaned_msg)
                     tool_messages_added = False # Reset flag after tool response
                 else:
                     logger.warning(f"Skipping ToolMessage at original index {i} as it does not follow an AIMessage with tool calls in sanitized sequence.")
             
             # --- Logic for adding HumanMessage --- 
             elif isinstance(msg, HumanMessage):
+                 # Ensure message doesn't have empty parts before adding
+                 cleaned_msg = self._ensure_valid_content(msg)
+                 if cleaned_msg is None:
+                     logger.warning(f"Skipping HumanMessage at index {i} - content couldn't be sanitized.")
+                     continue
+                     
                  # Can always add HumanMessage if it follows AI or Tool message
                  if isinstance(sanitized_history[-1], (AIMessage, ToolMessage)):
-                     sanitized_history.append(msg)
+                     sanitized_history.append(cleaned_msg)
                      tool_messages_added = False # Reset flag for new turn
                  else:
                       # Avoid consecutive HumanMessages if something went wrong
                       logger.warning(f"Skipping HumanMessage at original index {i} as it cannot follow {type(sanitized_history[-1]).__name__} in sanitized sequence.")
 
         logger.info(f"Sanitized history: Original length={len(history)}, New length={len(sanitized_history)}")
-        return sanitized_history
+        
+        # Final check - ensure all messages have valid content before returning
+        final_history = []
+        for msg in sanitized_history:
+            if not self._has_empty_content(msg):
+                final_history.append(msg)
+            else:
+                logger.warning(f"Removing message with empty content in final sanitization check.")
+                
+        # Add a fallback if we somehow end up with an empty history
+        if not final_history:
+            logger.warning("Sanitization resulted in empty history. Adding fallback topic message.")
+            final_history = [HumanMessage(content=f"Research the topic: {topic}")]
+            
+        logger.info(f"Sanitized history: Original length={len(history)}, Final length={len(final_history)}")
+        return final_history
 
     def _optimize_history_for_primary_model(self, history: List[BaseMessage], topic: str, max_turns: int = 3) -> List[BaseMessage]:
         """Optimize message history to reduce token usage by keeping only the most relevant recent context.
@@ -3317,3 +3366,89 @@ class ResearcherAgent:
                 
         # Return the normalized arguments
         return normalized_args
+
+    def _has_empty_content(self, message: BaseMessage) -> bool:
+        """Checks if a message has empty content or empty parts that would cause Gemini errors.
+        
+        Args:
+            message: The message to check
+            
+        Returns:
+            True if the message has empty content that would cause errors, False otherwise
+        """
+        # Check for None content
+        if message.content is None:
+            return True
+            
+        # Check for empty string content
+        if isinstance(message.content, str) and not message.content.strip():
+            return True
+            
+        # Check for list content with empty items
+        if isinstance(message.content, list):
+            # Empty list
+            if not message.content:
+                return True
+                
+            # List with empty items
+            for item in message.content:
+                if item is None:
+                    return True
+                if isinstance(item, str) and not item.strip():
+                    return True
+                if isinstance(item, dict) and not item:
+                    return True
+        
+        # Content seems valid
+        return False
+        
+    def _ensure_valid_content(self, message: BaseMessage) -> Optional[BaseMessage]:
+        """Ensures a message has valid content that won't cause Gemini errors.
+        
+        This function:
+        1. Removes empty parts from message content
+        2. Ensures string content is not empty
+        3. Returns a copy of the message with sanitized content
+        
+        Args:
+            message: The message to sanitize
+            
+        Returns:
+            A copy of the message with sanitized content, or None if the content can't be sanitized
+        """
+        if message.content is None:
+            # Replace None content with placeholder
+            return type(message)(content="[No content available]")
+            
+        if isinstance(message.content, str):
+            # Ensure string content is not empty
+            content = message.content.strip()
+            if not content:
+                return type(message)(content="[Empty content]")
+            return message  # Original message is fine
+            
+        if isinstance(message.content, list):
+            # Filter out empty parts from list content
+            valid_parts = []
+            for item in message.content:
+                if item is None:
+                    continue
+                if isinstance(item, str) and not item.strip():
+                    continue
+                if isinstance(item, dict) and not item:
+                    continue
+                valid_parts.append(item)
+                
+            # If we have valid parts, create a new message with them
+            if valid_parts:
+                # Create new message of same type with filtered content
+                return type(message)(
+                    content=valid_parts,
+                    tool_calls=getattr(message, 'tool_calls', None)
+                )
+            else:
+                # No valid parts found, create a message with placeholder content
+                return type(message)(content="[No valid content parts]")
+        
+        # For other content types, just return the original message
+        return message

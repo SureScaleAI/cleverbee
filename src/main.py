@@ -4,6 +4,7 @@ import logging
 import os
 import sys
 from datetime import datetime
+import time
 
 # Add project root to the Python path to allow importing 'config'
 project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -118,6 +119,9 @@ async def run_agent(topic: str):
     
     Args:
         topic: The research topic to investigate
+        
+    Returns:
+        int: Status code (0 for success, non-zero for failure)
     """
     logger.info(f"Starting research for topic: '{topic}'")
     
@@ -128,7 +132,9 @@ async def run_agent(topic: str):
     logger.info(f"Using {PRIMARY_MODEL_TYPE} provider via factory.")
     llm_client = get_llm_client(
         provider=PRIMARY_MODEL_TYPE,
-        callbacks=callbacks  # Pass callbacks to the factory
+        callbacks=callbacks,  # Pass callbacks to the factory
+        use_retry_wrapper=True,  # Enable retry functionality
+        max_retries=3  # Set maximum retries to 3
     )
 
     # Instantiate the agent with the selected client
@@ -138,34 +144,50 @@ async def run_agent(topic: str):
         callbacks=callbacks # Pass the single handler instance
     )
 
-    # Pass the prepared callbacks list to the agent's run method
-    # No need to pass thinking flags here
-    summary = await agent.run_research(topic, callbacks=callbacks) # Pass the single handler instance again
+    try:
+        # Pass the prepared callbacks list to the agent's run method
+        # No need to pass thinking flags here
+        current_date = datetime.now().strftime("%Y-%m-%d")
+        summary = await agent.run_research(topic, current_date=current_date, callbacks=callbacks) # Pass current date and callbacks
 
-    # Log token usage stats directly from the single handler instance
-    logger.info(f"Research complete. Token usage summary:")
-    # Use the processor within the handler for summary data
-    token_usage_handler.token_cost_processor.log_summary()
+        # Log token usage stats directly from the single handler instance
+        logger.info(f"Research complete. Token usage summary:")
+        # Use the processor within the handler for summary data
+        token_usage_handler.token_cost_processor.log_summary()
 
-    # Log cache statistics if available
-    if isinstance(llm_cache, NormalizingCache):
-        logger.info(llm_cache.print_stats())
+        # Log cache statistics if available
+        if isinstance(llm_cache, NormalizingCache):
+            logger.info(llm_cache.print_stats())
 
-    # Print the research summary
-    print(f"\n{'='*20} Research Summary {'='*20}")
-    print(f"Topic: {topic}\n")
-    print(summary)
-    print(f"{'='*58}\n")
+        # Print the research summary
+        print(f"\n{'='*20} Research Summary {'='*20}")
+        print(f"Topic: {topic}\n")
+        print(summary)
+        print(f"{'='*58}\n")
 
-    # Close browser resources explicitly after agent run
-    # Find the browser tool instance if it was loaded
-    browser_tool_instance = next((tool for tool in agent.tools if isinstance(tool, PlaywrightBrowserTool)), None)
-    if browser_tool_instance:
-         logger.info("Cleaning up browser resources...")
-         await browser_tool_instance.clean_up()
-         logger.info("Browser resources cleaned up.")
+        # Close browser resources explicitly after agent run
+        # Find the browser tool instance if it was loaded
+        browser_tool_instance = next((tool for tool in agent.tools if isinstance(tool, PlaywrightBrowserTool)), None)
+        if browser_tool_instance:
+             logger.info("Cleaning up browser resources...")
+             await browser_tool_instance.clean_up()
+             logger.info("Browser resources cleaned up.")
 
-    return summary
+        return 0  # Success
+    except Exception as e:
+        logger.error(f"Error during research run: {e}", exc_info=True)
+        
+        # Clean up browser resources even on failure
+        try:
+            browser_tool_instance = next((tool for tool in agent.tools if isinstance(tool, PlaywrightBrowserTool)), None)
+            if browser_tool_instance:
+                logger.info("Cleaning up browser resources after error...")
+                await browser_tool_instance.clean_up()
+                logger.info("Browser resources cleaned up after error.")
+        except Exception as cleanup_error:
+            logger.error(f"Error during browser cleanup: {cleanup_error}")
+            
+        return 1  # Failure
 
 def setup_agent():
     """Set up the research agent with proper LLM client via factory."""
@@ -177,7 +199,9 @@ def setup_agent():
         logger.info(f"Using {PRIMARY_MODEL_TYPE} provider via factory for agent setup.")
         llm_client = get_llm_client(
             provider=PRIMARY_MODEL_TYPE,
-            callbacks=callbacks  # Pass callbacks to the factory
+            callbacks=callbacks,  # Pass callbacks to the factory
+            use_retry_wrapper=True,  # Enable retry functionality
+            max_retries=3  # Set maximum retries to 3
         )
 
         # Get topic from args
@@ -216,18 +240,61 @@ def main():
             topic = f"{topic} {current_year}"
             logger.info(f"Added current year to research topic: '{original_topic}' → '{topic}'")
         
-        # Run agent without passing thinking flags
-        asyncio.run(run_agent(topic))
-    except KeyboardInterrupt:
-        logger.info("Process interrupted by user.")
-        # Perform any necessary cleanup here if needed globally
+        # Run agent with retry logic for critical errors
+        max_retries = 2  # Maximum number of retries for the entire research pipeline
+        retry_count = 0
+        last_error = None
+        
+        while retry_count <= max_retries:
+            try:
+                return_code = asyncio.run(run_agent(topic))
+                # If we get here, it was successful
+                return return_code
+            except KeyboardInterrupt:
+                logger.info("Process interrupted by user.")
+                return 1
+            except Exception as e:
+                last_error = e
+                retry_count += 1
+                
+                # Check if this is a known critical error that might benefit from a retry
+                error_str = str(e)
+                retryable_errors = [
+                    "contents.parts must not be empty",
+                    "GenerateContentRequest.contents",
+                    "Invalid argument provided to Gemini",
+                    "timeout", 
+                    "Timeout",
+                    "connection",
+                    "server error",
+                    "Server error"
+                ]
+                
+                if any(err in error_str for err in retryable_errors) and retry_count <= max_retries:
+                    retry_delay = 5 * retry_count  # Increasing delay between retries
+                    logger.error(
+                        f"Encountered retryable error: {e}. "
+                        f"Retrying entire research pipeline in {retry_delay} seconds "
+                        f"(attempt {retry_count}/{max_retries})..."
+                    )
+                    time.sleep(retry_delay)
+                else:
+                    # Non-retryable error or max retries exceeded
+                    logger.error(
+                        f"Unhandled exception in main: {e}. "
+                        f"No more retries (attempt {retry_count}/{max_retries})", 
+                        exc_info=True
+                    )
+                    return 1
+        
+        # If we've exhausted all retries
+        logger.error(f"Failed after {max_retries} retries. Last error: {last_error}")
+        return 1
     except Exception as e:
         logger.error(f"Unhandled exception in main: {e}", exc_info=True)
         return 1
     finally:
         logger.info("Research process finished.")
-
-    return 0
 
 if __name__ == "__main__":
     sys.exit(main()) 

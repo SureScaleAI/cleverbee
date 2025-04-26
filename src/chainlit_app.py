@@ -117,13 +117,24 @@ async def start_chat():
     try:
         llm_client = get_llm_client(
             provider=PRIMARY_MODEL_TYPE,
-            callbacks=session_callbacks
+            callbacks=session_callbacks,
+            use_retry_wrapper=True,  # Enable retry functionality
+            max_retries=3  # Set maximum retries to 3
         )
         cl.user_session.set("llm_client", llm_client)
         logger.info(f"LLM Client ({PRIMARY_MODEL_TYPE}) initialized and stored in session.")
     except Exception as e:
-        logger.error(f"Failed to initialize LLM Client: {e}", exc_info=True)
-        await cl.ErrorMessage(content=f"Failed to initialize the language model: {e}").send()
+        error_message = f"Failed to initialize the language model: {e}"
+        logger.error(error_message, exc_info=True)
+        
+        # Provide a more user-friendly error message with potential solutions
+        user_error_message = f"Failed to initialize the language model: {str(e)}"
+        if "Can't instantiate abstract class" in str(e):
+            user_error_message += "\n\nThis appears to be an issue with the LLM wrapper. The application will be fixed in the next update. Please try again later."
+        elif "API key" in str(e).lower():
+            user_error_message += "\n\nPlease check that your API keys are correctly set in your environment variables."
+        
+        await cl.ErrorMessage(content=user_error_message).send()
         return
 
     # --- Initialize Researcher Agent ---

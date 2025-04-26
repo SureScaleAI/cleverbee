@@ -85,7 +85,7 @@ logger.info(f"Setting up LLM cache with database at {cache_db_path}")
 
 if ENABLE_ADVANCED_CACHE:
     logger.info("Initializing advanced normalizing cache for better hit rates")
-    llm_cache = initialize_normalizing_cache(db_path=cache_db_path, cache_schema=CACHE_SCHEMA)
+    llm_cache = initialize_normalizing_cache(db_path=cache_db_path)
     set_llm_cache(llm_cache)
     import langchain
     langchain.llm_cache = llm_cache  # Ensure global is set for monitor
@@ -270,7 +270,30 @@ def main():
                     "Server error"
                 ]
                 
-                if any(err in error_str for err in retryable_errors) and retry_count <= max_retries:
+                # Special handling for Gemini empty parts error
+                if "contents.parts must not be empty" in error_str or "GenerateContentRequest.contents" in error_str:
+                    logger.error("Detected Gemini API empty content error. This is usually due to an empty message in the conversation history.")
+                    if retry_count <= max_retries:
+                        # Clear cache to force regeneration of conversation
+                        logger.info("Attempting to clear cache to potentially fix the error...")
+                        if llm_cache:
+                            try:
+                                llm_cache.clear()
+                                logger.info("Cache cleared successfully.")
+                            except Exception as cache_error:
+                                logger.warning(f"Failed to clear cache: {cache_error}")
+                        
+                        retry_delay = 10  # Longer delay for this specific error
+                        logger.error(
+                            f"Retrying with fresh conversation in {retry_delay} seconds "
+                            f"(attempt {retry_count}/{max_retries})..."
+                        )
+                        time.sleep(retry_delay)
+                    else:
+                        logger.error("Max retries exceeded for Gemini API empty content error.")
+                        return 1
+                
+                elif any(err in error_str for err in retryable_errors) and retry_count <= max_retries:
                     retry_delay = 5 * retry_count  # Increasing delay between retries
                     logger.error(
                         f"Encountered retryable error: {e}. "

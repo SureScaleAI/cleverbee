@@ -2442,6 +2442,20 @@ class ResearcherAgent:
         3. No consecutive function calls or responses
         4. No empty message content parts (to prevent Gemini's "contents.parts must not be empty" error)
         """
+        # Debug: Log the incoming messages to identify potential problematic messages
+        logger.warning(f"Sanitizing history with {len(history)} messages for Gemini API")
+        for i, msg in enumerate(history):
+            content_type = type(msg.content).__name__
+            content_preview = str(msg.content)[:50] + "..." if isinstance(msg.content, str) and len(str(msg.content)) > 50 else msg.content
+            logger.warning(f"Message {i}: {type(msg).__name__} with content type {content_type}, preview: {content_preview}")
+            
+            # Extra check for list content
+            if isinstance(msg.content, list):
+                for j, part in enumerate(msg.content):
+                    part_type = type(part).__name__
+                    part_preview = str(part)[:30] + "..." if isinstance(part, str) and len(str(part)) > 30 else part
+                    logger.warning(f"  Part {j}: type={part_type}, preview={part_preview}")
+        
         if not history:
             # If history is empty, just return a HumanMessage with the topic
             return [HumanMessage(content=f"Research the topic: {topic}")]
@@ -2611,6 +2625,17 @@ class ResearcherAgent:
             logger.debug(f"Final message {i}: {type(msg).__name__} with content {content_info}")
                 
         logger.info(f"Sanitized history: Original={len(history)}, Filtered={len(filtered_history)}, Final={len(final_history)} messages")
+        
+        # Add additional check for the exact message positions that might have issues
+        for i, msg in enumerate(final_history):
+            if i == 6:  # The position that's causing errors
+                logger.warning(f"SPECIAL CHECK for position 6: {type(msg).__name__} with content type {type(msg.content).__name__}")
+                if isinstance(msg.content, list):
+                    for j, part in enumerate(msg.content):
+                        part_type = type(part).__name__ 
+                        part_preview = str(part)[:30] + "..." if isinstance(part, str) and len(str(part)) > 30 else part
+                        logger.warning(f"  Position 6, Part {j}: type={part_type}, preview={part_preview}")
+        
         return final_history
 
     def _optimize_history_for_primary_model(self, history: List[BaseMessage], topic: str, max_turns: int = 3) -> List[BaseMessage]:
@@ -3456,7 +3481,7 @@ class ResearcherAgent:
             from langchain_core.output_parsers import StrOutputParser
             
             # Use the next_step_llm for correction logic if available, otherwise fall back to primary LLM
-            correction_llm = getattr(self, 'next_step_llm', self.llm_client)
+            correction_llm = self.llm_client
             correction_chain = TOOL_CORRECTION_PROMPT | correction_llm | StrOutputParser()
             
             # Set up callbacks for the LLM call
@@ -3638,27 +3663,58 @@ class ResearcherAgent:
         Returns:
             A copy of the message with sanitized content, or None if the content can't be sanitized
         """
+        # Handle None content more aggressively
         if message.content is None:
-            # Replace None content with placeholder
+            logger.warning("Replacing None content with placeholder text in message")
             return type(message)(content="[No content available]")
             
+        # More aggressively handle string content
         if isinstance(message.content, str):
             # Ensure string content is not empty
             content = message.content.strip()
             if not content:
-                return type(message)(content="[Empty content]")
-            return message  # Original message is fine
+                logger.warning("Replacing empty string content with placeholder text")
+                return type(message)(content="[Empty content replaced]")
+            # Return a new message to ensure we have a fresh object
+            return type(message)(content=content)
             
+        # Handle list content more carefully
         if isinstance(message.content, list):
+            # Empty list is a problem
+            if not message.content:
+                logger.warning("Replacing empty list content with placeholder text")
+                return type(message)(content="[Empty list content replaced]")
+                
             # Filter out empty parts from list content
             valid_parts = []
             for item in message.content:
+                # Skip None values
                 if item is None:
                     continue
-                if isinstance(item, str) and not item.strip():
+                    
+                # Handle string items
+                if isinstance(item, str):
+                    if item.strip():  # Only add non-empty strings
+                        valid_parts.append(item.strip())  # Ensure no leading/trailing whitespace
                     continue
-                if isinstance(item, dict) and not item:
+                        
+                # Handle dict items
+                if isinstance(item, dict):
+                    if item:  # Only add non-empty dicts
+                        # Recursively clean dict values
+                        cleaned_dict = {}
+                        for k, v in item.items():
+                            if isinstance(v, str):
+                                v_clean = v.strip()
+                                if v_clean:  # Only add non-empty string values
+                                    cleaned_dict[k] = v_clean
+                            elif v is not None:  # Add any non-None value
+                                cleaned_dict[k] = v
+                        if cleaned_dict:  # Only add if we have values left
+                            valid_parts.append(cleaned_dict)
                     continue
+                
+                # Any other non-None type, add as is
                 valid_parts.append(item)
                 
             # If we have valid parts, create a new message with them
@@ -3670,9 +3726,17 @@ class ResearcherAgent:
                 )
             else:
                 # No valid parts found, create a message with placeholder content
+                logger.warning("All content parts were invalid or empty, replacing with placeholder")
                 return type(message)(content="[No valid content parts]")
         
-        # For other content types, just return the original message
+        # Additional checks for other types
+        # If a message somehow has a zero-length content or otherwise problematic content
+        content_str = str(message.content)
+        if not content_str or content_str.isspace():
+            logger.warning(f"Content conversion to string resulted in empty content of type {type(message.content).__name__}")
+            return type(message)(content="[Content replaced]")
+        
+        # If all checks pass, return a copy of the message to ensure we have a fresh object
         return message
 
     async def _fetch_url_title(self, session: aiohttp.ClientSession, url: str) -> Optional[str]:

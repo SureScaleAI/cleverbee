@@ -747,12 +747,9 @@ class ResearcherAgent:
                         # Store both summary and full content for the final report
                         accumulated_content += (
                             f"\n\n{header}\n"
-                            f"--- BEGIN FULL TRANSCRIPT (for final summary) ---\n"
-                            f"{output_str}\n" # Use the original full output_str
+                            f"--- BEGIN FULL TRANSCRIPT ---\n"
+                            f"{output_str}\n"
                             f"--- END FULL TRANSCRIPT ---\n"
-                            f"--- BEGIN SUMMARY ---\n"
-                            f"{summary}\n" # Add the generated summary (or fallback)
-                            f"--- END SUMMARY ---\n"
                             f"--- End Transcript ---\n\n"
                         )
                         
@@ -797,14 +794,15 @@ class ResearcherAgent:
                     # --- MODIFIED CONTENT ACCUMULATION ---
                     # Store both summary and full content for the final report
                     accumulated_content += (
-                        f"\n\n{header}\n"
-                        f"--- BEGIN FULL CONTENT (for final summary) ---\n" # Corrected: Ensure newline and quote are on the same line
-                        f"{output_str}\n" # Use the original full output_str
+                        f"\n\n<source>\n"
+                        f"Source N\n"
+                        f"Tool: {tool_name}\n"
+                        f"Function: {function_name}\n"
+                        f"Parameters: {tool_args}\n"
+                        f"--- BEGIN FULL CONTENT ---\n"
+                        f"{output_str}\n"
                         f"--- END FULL CONTENT ---\n"
-                        f"--- BEGIN SUMMARY ---\n"
-                        f"{summary}\n" # Add the generated summary
-                        f"--- END SUMMARY ---\n"
-                        f"--- End MCP Tool Output ---\n\n"
+                        f"</source>\n\n"
                     )
                     # --- END MODIFICATION ---
                     
@@ -836,13 +834,10 @@ class ResearcherAgent:
                     # Store truncated raw content as summary fallback, but full content for final summary
                     summary_fallback = truncated_output
                     accumulated_content += (
-                        f"\n\n{header}\n" # Header already includes "(summarization failed)"
-                        f"--- BEGIN FULL CONTENT (for final summary) ---\n"
-                        f"{output_str}\n" # Use the original full output_str
+                        f"\n\n{header}\n"
+                        f"--- BEGIN FULL CONTENT ---\n"
+                        f"{truncated_output}\n"
                         f"--- END FULL CONTENT ---\n"
-                        f"--- BEGIN SUMMARY (Fallback - Truncated Raw) ---\n"
-                        f"{summary_fallback}\n" # Add the truncated fallback
-                        f"--- END SUMMARY ---\n" # Corrected: Ensure newline and quote are on the same line
                         f"--- End MCP Tool Output ---\n\n"
                     )
                     # --- END MODIFICATION ---
@@ -1826,7 +1821,9 @@ class ResearcherAgent:
                                             # Store content with proper source attribution
                                             reddit_content_data = {
                                                 "full_content": full_reddit_content,
-                                                "title": f"Reddit content from {post_url}"
+                                                "title": f"Reddit content from {post_url}",
+                                                "tool_name": tool_name,
+                                                "tool_args": tool_args
                                             }
                                             # Store content with proper source type
                                             if post_url and post_url != "Unknown URL":
@@ -1844,9 +1841,7 @@ class ResearcherAgent:
                                             full_content_to_add = full_reddit_content # Specific for Reddit
                                             accumulated_content += (
                                                 f"\n\n--- BEGIN PROCESSED CONTENT from {source_desc} ---\n"
-                                                f"--- Summary ---\n"
-                                                f"{summary}\n"
-                                                f"--- Full Content (for final summary) ---\n"
+                                                f"--- Full Content ---\n"
                                                 f"{full_content_to_add}\n"
                                                 f"--- END PROCESSED CONTENT from {source_desc} ---\n\n"
                                             )
@@ -1864,10 +1859,8 @@ class ResearcherAgent:
                                             summary_fallback = truncated_output
                                             accumulated_content += (
                                                 f"\n\n--- BEGIN FAILED-SUMMARY CONTENT from {source_desc} ---\n"
-                                                f"--- Summary (Fallback - Truncated Raw) ---\n"
-                                                f"{summary_fallback}\n"
-                                                f"--- Full Content (for final summary) ---\n"
-                                                f"{full_content_to_add}\n" # Add the original full content here
+                                                f"--- Full Content ---\n"
+                                                f"{full_content_to_add}\n"
                                                 f"--- END FAILED-SUMMARY CONTENT from {source_desc} ---\n\n"
                                             )
                                             # --- END MODIFICATION ---
@@ -1961,19 +1954,17 @@ class ResearcherAgent:
                                 elif isinstance(tool_args, dict) and 'function' in tool_args:
                                     function_name = tool_args['function']
                                 
-                                # Process the generic MCP tool output
-                                tool_content_for_history, accumulated_content, content_added_this_call, processed_counts = (
-                                    await self._process_generic_mcp_tool_output(
-                                        tool_name=tool_name,
-                                        function_name=function_name,
-                                        tool_args=tool_args,
-                                        output_str=output_str,
-                                        processed_counts=processed_counts,
-                                        accumulated_content=accumulated_content,
-                                        tool_call_id=tool_call_id,
-                                        callbacks=self.callbacks
-                                    )
-                                )
+                                # Store content with tool name, function name, and parameters
+                                mcp_content_data = {
+                                    "full_content": output_str,
+                                    "title": f"MCP Tool Output from {tool_name}",
+                                    "tool_name": tool_name,
+                                    "function_name": function_name,
+                                    "tool_args": tool_args
+                                }
+                                # Use a synthetic URL or identifier if no URL is present
+                                mcp_content_id = f"mcp_{tool_name}_{function_name or 'none'}_{tool_call_id}"
+                                self.content_manager.store_content(mcp_content_id, mcp_content_data, source_type=tool_name)
 
                             # Append the final determined history message
                             # <<< ADD DEBUG LOG 2 >>>

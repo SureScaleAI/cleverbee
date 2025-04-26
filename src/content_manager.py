@@ -77,7 +77,6 @@ class ContentItem:
         self.title = title or "Unknown Title"
         self.metadata = metadata or {}
         self.timestamp = datetime.now()
-        self.used_in_summary = False  # Tracks if this content was used in final summary
         self.content_id = self._generate_content_id(source_url)
         self.documents = []  # Will hold chunked documents
         
@@ -157,7 +156,6 @@ class ContentManager:
         
         # New content tracking with improved source attribution
         self.content_items: Dict[str, ContentItem] = {}
-        self.used_content_items: Set[str] = set()  # Track content IDs used in summary
 
         # Splitter
         self.splitter = RecursiveCharacterTextSplitter(
@@ -389,18 +387,6 @@ class ContentManager:
 
         return content_id
         
-    def mark_content_used_in_summary(self, url_or_id: str):
-        """Mark a content item as used in the summary.
-        
-        Args:
-            url_or_id: URL or content ID
-        """
-        url = self.content_hash_map.get(url_or_id, url_or_id)
-        if url in self.content_items:
-            self.content_items[url].used_in_summary = True
-            self.used_content_items.add(url)
-            logger.info(f"Marked content from {url} as used in summary")
-            
     def generate_sources_section(self) -> str:
         """Generate a properly formatted sources section for the final output.
         
@@ -409,17 +395,10 @@ class ContentManager:
         """
         sources = []
         
-        # Include all content items marked as used in summary
-        for url in self.used_content_items:
-            if url in self.content_items:
-                item = self.content_items[url]
-                sources.append(f"{item.source_url}")
-                
-        # If no sources were marked, include all content items as fallback
-        if not sources and self.content_items:
-            logger.warning("No content items were explicitly marked as used. Including all sources as fallback.")
-            for url, item in self.content_items.items():
-                sources.append(f"{item.source_url}")
+        # Include all content items
+        for url in self.content_items:
+            item = self.content_items[url]
+            sources.append(f"{item.source_url}")
                 
         if sources:
             return "---SOURCES_START---\n" + "\n".join(sources) + "\n---SOURCES_END---"
@@ -471,9 +450,6 @@ class ContentManager:
                 self.content_items[url] = temp_content_item
         else:
             if url in self.summaries:
-                # If we already have a summary, mark this content as used
-                if url in self.content_items:
-                    self.mark_content_used_in_summary(url)
                 return self.summaries[url]
                 
             if url not in self.documents or not self.documents[url]:
@@ -594,9 +570,6 @@ class ContentManager:
                 # --- END FIX ---
                 logger.info(f"Generated summary using {model_desc} for {url} - {len(final_summary)} chars")
                 
-                # Mark this content as used in summary upon successful generation
-                self.mark_content_used_in_summary(url)
-                
             except Exception as e:
                 logger.error(f"Error generating summary with {model_desc}: {e}", exc_info=True)
                 
@@ -617,14 +590,9 @@ class ContentManager:
                         else:
                             logger.warning(f"Unexpected result type from fallback chain: {type(result)}")
                             final_summary = f"[Summary generation failed: {e}]"
-                            
-                        # Mark as used if fallback succeeded
-                        self.mark_content_used_in_summary(url)
                     except Exception as fallback_e:
                         logger.error(f"Fallback summarization also failed: {fallback_e}", exc_info=True)
                         final_summary = f"[Summary generation failed: {e}]"
-                else:
-                    final_summary = f"[Summary generation failed: {e}]"
                 
         # --- Cache the summary ---
         self.summaries[url] = final_summary

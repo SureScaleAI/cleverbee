@@ -17,6 +17,10 @@ from langchain_core.messages import HumanMessage, AIMessage
 class MockChatModel(BaseChatModel):
     model_name: str = "mock-model"
 
+    @property
+    def _llm_type(self):
+        return "mock"
+
     def _generate(self, messages, stop=None, run_manager=None, **kwargs):
         # Simple mock generation
         content = f"Summary for: {messages[0].content[:50]}..."
@@ -238,6 +242,58 @@ class TestContentManagerSummarization(unittest.TestCase): # Renamed class slight
                     # Verify the summary returned was the one from our mock
                     self.assertEqual(summary, "Summary using map_reduce")
 
+
+# --- Additional tests for store_content ---
+class TestContentManagerStoreContent(unittest.TestCase):
+    def setUp(self):
+        # Use a mock LLM for initialization
+        self.mock_llm = MockChatModel()
+        self.content_manager = ContentManager(
+            primary_llm=self.mock_llm,
+            summarization_llm=None,
+            chunk_size=1000,
+            chunk_overlap=100
+        )
+
+    def test_store_content_basic(self):
+        """
+        Test that store_content stores content and metadata correctly.
+        """
+        url = "http://example.com/test"
+        content_data = {
+            "full_content": "Test content for storage.",
+            "title": "Test Title",
+            "tool_name": "test_tool",
+            "tool_input": {"param": "value"},
+            "tool_output": {"result": "ok"},
+            "content_type": "text",
+            "custom": 123
+        }
+        source_type = "web"
+
+        content_id = self.content_manager.store_content(
+            url=url,
+            content_data=content_data,
+            source_type=source_type
+        )
+
+        # Check that the content_id is in the hash map
+        self.assertIn(content_id, self.content_manager.content_hash_map)
+        # Check that the content item is in content_items
+        self.assertIn(url, self.content_manager.content_items)
+        item = self.content_manager.content_items[url]
+        self.assertEqual(item.content, content_data["full_content"])
+        self.assertEqual(item.source_url, url)
+        self.assertEqual(item.source_type, source_type)
+        self.assertEqual(item.title, content_data["title"])
+        self.assertEqual(item.metadata["tool_name"], content_data["tool_name"])
+        self.assertEqual(item.metadata["tool_input"], content_data["tool_input"])
+        self.assertEqual(item.metadata["tool_output"], content_data["tool_output"])
+        self.assertEqual(item.metadata["content_type"], content_data["content_type"])
+        self.assertEqual(item.metadata["custom"], content_data["custom"])
+        # Check that the documents are created
+        self.assertIn(url, self.content_manager.documents)
+        self.assertIsInstance(self.content_manager.documents[url], list)
 
 # --- Entry point for running tests ---
 if __name__ == '__main__':

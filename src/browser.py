@@ -388,9 +388,9 @@ class WebBrowserInput(BaseModel):
     action: str = Field(
         ..., 
         description="The action to perform.", 
-        enum=["navigate", "extract_content", "search", "navigate_and_extract", "search_next_page"]
+        enum=["navigate", "extract_content", "extract", "search", "navigate_and_extract", "search_next_page"]
     )
-    url: Optional[str] = Field(None, description="URL to navigate to (for navigate and navigate_and_extract actions)")
+    url: Optional[str] = Field(None, description="URL to navigate to (for navigate, extract, and navigate_and_extract actions)")
     query: Optional[str] = Field(None, description="Search query (for search and search_next_page actions)")
     page: Optional[int] = Field(None, description="Page number for search pagination (for search_next_page action)")
 
@@ -405,7 +405,8 @@ class PlaywrightBrowserTool(BaseTool):
         "This tool can perform several actions including:\n"
         "1. 'search': Search the web for information on a topic\n"
         "2. 'navigate_and_extract': Navigate to a URL and extract its main content\n"
-        "3. 'search_next_page': Get the next page of search results for the previous search\n\n"
+        "3. 'extract': Alias for 'navigate_and_extract'\n"
+        "4. 'search_next_page': Get the next page of search results for the previous search\n\n"
         "When extracting content, it automatically handles different content types including HTML and PDF documents, "
         "converting them to readable text. The tool detects CAPTCHAs and "
         "provides a way for the user to solve them when needed."
@@ -1372,6 +1373,11 @@ class PlaywrightBrowserTool(BaseTool):
         # Standardize the format
         action = input_data.get("action", "")
         
+        # Add alias for "extract" to "navigate_and_extract"
+        if action == "extract":
+            logger.info("Converting 'extract' action alias to 'navigate_and_extract'")
+            action = "navigate_and_extract"
+            
         # Handle cases where action might be inferred
         if not action and "url" in input_data:
             # Handle direct URL input for navigation/extraction
@@ -1410,7 +1416,7 @@ class PlaywrightBrowserTool(BaseTool):
                 return await self._search_next_page(query, page)
                 
             else:
-                return f"Error: Unknown action '{action}'. Supported actions: navigate_and_extract, search, search_next_page"
+                return f"Error: Unknown action '{action}'. Supported actions: navigate_and_extract, extract (alias for navigate_and_extract), search, search_next_page"
                 
         except Exception as e:
             logger.error(f"Error executing browser action '{action}': {e}", exc_info=True)

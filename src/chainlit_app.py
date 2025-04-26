@@ -748,11 +748,19 @@ async def on_use_full_content(action: cl.Action):
         callbacks = [token_manager]  # Only include token manager for now
         metadata = {"skip_ui_updates": True}
         
+        # <<< ADD: Configuration for large output >>>
+        llm_config = {
+            "callbacks": callbacks,
+            "metadata": metadata,
+            "max_output_tokens": config.settings.MAX_CONTINUED_CONVERSATION_TOKENS
+        }
+        logger.info(f"Invoking LLM for full content response with max_output_tokens={llm_config['max_output_tokens']}")
+        # <<< END ADD >>>
+
         # First try to get a response
         response = await llm_client.agenerate(
             messages=messages,
-            callbacks=callbacks,
-            metadata=metadata
+            config=llm_config 
         )
         
         # >>> ADDED: Log LLM parameters before response processing <<<

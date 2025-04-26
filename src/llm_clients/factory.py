@@ -463,7 +463,7 @@ def get_llm_client(
             logger.info(f"Creating Gemini client for Summarization (Model: {final_model_name})")
         else:
             final_model_name = model_name or config.settings.GEMINI_MODEL_NAME
-            final_max_tokens = max_tokens or 8092 # Default max tokens for Gemini main task
+            final_max_tokens = max_tokens or 16384 # Default max tokens for Gemini main task
             logger.info(f"Creating Gemini client for Main Task (Model: {final_model_name})")
         if not final_model_name:
             # Add a fallback default model if not configured
@@ -549,7 +549,7 @@ def get_llm_client(
                 final_max_tokens = max_tokens or config.settings.SUMMARY_MAX_TOKENS or 1024
             else:
                 # For primary reasoning, allow longer responses
-                final_max_tokens = max_tokens or 8092
+                final_max_tokens = max_tokens or 16384
 
             # Basic GPU layer offloading
             n_gpu_layers = config.settings.N_GPU_LAYERS # Default: -1 in settings

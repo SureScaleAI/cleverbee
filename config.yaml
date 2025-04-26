@@ -71,6 +71,11 @@ SUMMARY_MAX_TOKENS: 1200
 # This applies specifically to the LLM instance responsible for creating the comprehensive research report.
 # This is defined in the ResearcherAgent's initialization.
 FINAL_SUMMARY_MAX_TOKENS: 16000
+# --- Post-Research Conversation Limits ---
+# Sets the maximum tokens for LLM responses during follow-up after research is complete,
+# especially when requesting the full accumulated content.
+# Default: 32768
+MAX_CONTINUED_CONVERSATION_TOKENS: 32768
 # --- Next Step Model ---
 # Specifies which model to use for next step/agentic decision tasks.
 # This model is used for agentic decision steps (the action loop), separate from the primary LLM and summarizer model.

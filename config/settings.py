@@ -20,8 +20,8 @@ DEFAULT_CONFIG = {
     "LOCAL_MODEL_NAME": "mistral-7b-instruct-v0.2.Q4_K_M.gguf",  # Default local model
     "LOCAL_MODEL_QUANT_LEVEL": "Q4_K_M",  # Default quantization level
     "SUMMARIZER_MODEL": "gemini-2.0-flash",  # Default summarization model setting
-    "SUMMARY_MAX_TOKENS": int(os.environ.get('SUMMARY_MAX_TOKENS', 1200)),
-    "FINAL_SUMMARY_MAX_TOKENS": int(os.environ.get('FINAL_SUMMARY_MAX_TOKENS', 16000)), # Max tokens for the final report
+    "SUMMARY_MAX_TOKENS": 1200,
+    "FINAL_SUMMARY_MAX_TOKENS": 16000, # Max tokens for the final report
     # --- Next Step Model Configuration --- #
     "NEXT_STEP_MODEL": "gemini-2.5-flash-preview-04-17",  # Default next step model
     "NEXT_STEP_THINKING_DEFAULT": False,      # Default: do not use thinking mode unless planner requests
@@ -77,6 +77,7 @@ DEFAULT_CONFIG = {
     "MIN_POSTS_PER_SEARCH": 1,
     "MAX_POSTS_PER_SEARCH": 2,
     "MAX_RESULTS_PER_SEARCH_PAGE": 10,
+    "MAX_CONTINUED_CONVERSATION_TOKENS": 32768
 }
 
 def load_config():
@@ -125,11 +126,13 @@ config = load_config()
 for key, value in config.items():
     globals()[key] = value
 
-# Define additional defaults/derived values for keys potentially missing from config
-# Get the primary model type (gemini, claude, or local)
-PRIMARY_MODEL_TYPE = config.get('PRIMARY_MODEL_TYPE', 'gemini')
+# --- Global Variables (Derived) --- #
+# Only keep derived variables or those not in DEFAULT_CONFIG
+GEMINI_MODEL = config.get('GEMINI_MODEL_NAME')
+CLAUDE_MODEL = config.get('CLAUDE_MODEL_NAME')
 
-# Determine the primary model name based on PRIMARY_MODEL_TYPE
+# Derive LLM_PROVIDER and PRIMARY_MODEL_NAME based on PRIMARY_MODEL_TYPE
+PRIMARY_MODEL_TYPE = config.get('PRIMARY_MODEL_TYPE', 'gemini')
 if PRIMARY_MODEL_TYPE == 'local':
     PRIMARY_MODEL_NAME = config.get('LOCAL_MODEL_NAME')
     LLM_PROVIDER = 'local'  # Set for backwards compatibility
@@ -217,12 +220,6 @@ logger.info(f"Tools Config: {TOOLS_CONFIG}")
 MIN_POSTS_PER_SEARCH = config.get('MIN_POSTS_PER_SEARCH', 1)
 MAX_POSTS_PER_SEARCH = config.get('MAX_POSTS_PER_SEARCH', 2)
 
-# --- Global Variables --- #
-GEMINI_MODEL = config.get('GEMINI_MODEL_NAME')
-CLAUDE_MODEL = config.get('CLAUDE_MODEL_NAME')
-MIN_REGULAR_WEB_PAGES = config.get('MIN_REGULAR_WEB_PAGES', 1)  # Only regular web pages, not Reddit/tool-specific
-MAX_REGULAR_WEB_PAGES = config.get('MAX_REGULAR_WEB_PAGES', 2)
-
 # --- Content Condensation Settings --- #
 CONDENSE_FREQUENCY = 1  # Condense after each new content addition
 
@@ -234,5 +231,8 @@ AVAILABLE_TOOLS = {
     "reddit_extract_post": "src.tools.reddit_search_tool.RedditExtractPostTool",
 }
 logger.info(f"Defined AVAILABLE_TOOLS: {list(AVAILABLE_TOOLS.keys())}")
+
+# === Debugging and Development ===
+DEBUG_MODE = os.getenv("DEBUG_MODE", "False").lower() == "true"
 
 # --- Further global settings --- #

@@ -309,19 +309,8 @@ class ResearcherAgent:
         except Exception as e:
             logger.error(f"Failed to initialize summarization LLM: {e}")
             self.summarization_llm = self.llm_client  # Fallback to primary LLM
-        
-        # Initialize the final summary LLM
-        try:
-            self.final_summary_llm = get_llm_client(
-                provider="gemini",
-                model_name=SUMMARIZER_MODEL,
-                max_tokens=FINAL_SUMMARY_MAX_TOKENS,
-                is_summary_client=False
-            )
-            logger.info(f"Initialized final summary LLM: {SUMMARIZER_MODEL} (Max Tokens: {FINAL_SUMMARY_MAX_TOKENS})")
-        except Exception as e:
-            logger.error(f"Failed to initialize final summary LLM: {e}")
-            self.final_summary_llm = self.summarization_llm  # Fallback to summarization LLM
+        # Set final_summary_llm to primary LLM
+        self.final_summary_llm = self.llm_client
         
         # Initialize the content manager
         self.content_manager = ContentManager(
@@ -558,12 +547,11 @@ class ResearcherAgent:
             SystemMessage(content="You are an expert research summarizer."), 
             ("human", SUMMARY_PROMPT), # Expects {topic} and {accumulated_content}
         ])
-        # <<< MODIFICATION: Use the dedicated final_summary_llm >>>
+        # Use the primary LLM for the final summary
         if not self.final_summary_llm:
-            raise RuntimeError("Final Summary LLM is not available for summarization chain")
-        logger.info(f"Building final summarization chain using LLM: {getattr(self.final_summary_llm, 'model', 'Unknown')} (Max Tokens: {FINAL_SUMMARY_MAX_TOKENS})")
+            raise RuntimeError("Primary LLM is not available for summarization chain (final summary)")
+        logger.info(f"Building final summarization chain using PRIMARY LLM: {getattr(self.final_summary_llm, 'model', 'Unknown')}")
         return summary_prompt_template | self.final_summary_llm
-        # <<< END MODIFICATION >>>
 
     def _calculate_total_processed(self, processed_counts: Dict[str, Any]) -> int:
         """Helper method to calculate total processed items including MCP tools.
@@ -799,7 +787,8 @@ class ResearcherAgent:
                         f"Tool: {tool_name}\n"
                         f"Function: {function_name}\n"
                         f"Parameters: {tool_args}\n"
-                        f"--- BEGIN FULL CONTENT ---\n"
+                        + (f"URL: {tool_args['url']}\n" if isinstance(tool_args, dict) and 'url' in tool_args else "")
+                        + f"--- BEGIN FULL CONTENT ---\n"
                         f"{output_str}\n"
                         f"--- END FULL CONTENT ---\n"
                         f"</source>\n\n"
@@ -2951,38 +2940,26 @@ class ResearcherAgent:
         return "\n".join(token_table)
 
     async def _summarize_content(self, topic: str, content: str) -> str:
-        """Summarize the provided content using the final_summary_llm and SUMMARY_PROMPT."""
-        # <<< CHANGE: Use self.final_summary_llm >>>
+        """Summarize the provided content using the primary LLM and SUMMARY_PROMPT."""
         if not self.final_summary_llm: 
-            logger.error("No final_summary_llm available. Cannot generate summary.")
-            return "[Summary generation failed: Final Summary LLM not available]"
-        
-        logger.info(f"Attempting final summarization using final_summary_llm and SUMMARY_PROMPT for topic: '{topic}'")
-        
+            logger.error("No primary LLM available. Cannot generate summary.")
+            return "[Summary generation failed: Primary LLM not available]"
+        logger.info(f"Attempting final summarization using PRIMARY LLM and SUMMARY_PROMPT for topic: '{topic}'")
         try:
-            # Format the imported SUMMARY_PROMPT
             prompt_str = SUMMARY_PROMPT.format(topic=topic, accumulated_content=content)
             messages = [HumanMessage(content=prompt_str)]
-            
-            # Pass callbacks if available
             callbacks = getattr(self, 'callbacks', None)
             run_config = {"callbacks": callbacks} if callbacks else None
-            
-            # <<< CHANGE: Invoke self.final_summary_llm >>>
             response = await self.final_summary_llm.ainvoke(messages, config=run_config)
-            
             summary_text = getattr(response, 'content', None)
-
             if summary_text:
-                logger.info(f"Successfully generated final summary using final_summary_llm (length: {len(summary_text)} chars)")
-                # Assume the LLM followed the prompt format including delimiters
+                logger.info(f"Successfully generated final summary using PRIMARY LLM (length: {len(summary_text)} chars)")
                 return summary_text 
             else:
-                logger.error("final_summary_llm returned empty response or no content for final summary.")
+                logger.error("Primary LLM returned empty response or no content for final summary.")
                 return "[Summary generation failed: LLM returned empty response]"
-
         except Exception as e:
-            logger.error(f"Exception during final summarization with final_summary_llm: {e}", exc_info=True)
+            logger.error(f"Exception during final summarization with primary LLM: {e}", exc_info=True)
             return f"[Summary generation failed: {e}]"
 
     def _extract_structured_confirmation(self, content: str) -> Tuple[Optional[str], Dict[str, Any]]:

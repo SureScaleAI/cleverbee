@@ -395,21 +395,25 @@ Both options include the original research topic and research plan for context.
         cl.user_session.set("research_plan", research_plan)
         cl.user_session.set("research_completed", True)
         
+        # --- NEW: Extract and display summary and sources as-is ---
+        import re
+        summary_match = re.search(r'---SUMMARY_START---(.*?)---SUMMARY_END---', summary, re.DOTALL)
+        sources_match = re.search(r'---SOURCES_START---(.*?)---SOURCES_END---', summary, re.DOTALL)
+        summary_md = summary_match.group(1).strip() if summary_match else summary.strip()
+        sources_md = sources_match.group(1).strip() if sources_match else ""
+        
         end_time = datetime.now()
         logger.info(f"Research process finished in {end_time - start_time}")
         if processing_msg:
             processing_msg.content=f"✅ Researching **'{topic}'**"
             await processing_msg.update()
         await chainlit_callback.display_final_token_summary()
-        await cl.Message(content=f"""
-**Final Summary:**
-
-{summary}
-
----
-
-You can now ask follow-up questions about this research. I'll give you the option to use either just this summary or the full detailed content I've gathered for answering your questions.
-""", author="Researcher").send()
+        # --- Render summary and sources as clean markdown ---
+        display_content = f"**Final Summary:**\n\n{summary_md}\n\n"
+        if sources_md:
+            display_content += f"### References\n{sources_md}\n\n"
+        display_content += "---\nYou can now ask follow-up questions about this research. I'll give you the option to use either just this summary or the full detailed content I've gathered for answering your questions."
+        await cl.Message(content=display_content, author="Researcher").send()
     except Exception as e:
         logger.error(f"Error during research: {e}", exc_info=True)
         if processing_msg:

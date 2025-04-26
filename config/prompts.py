@@ -295,7 +295,7 @@ Synthesized Summary (ensure all critical details from all summaries are preserve
 
 # Prompt for generating a research summary
 SUMMARY_PROMPT = """
-You are an expert research analyst. Analyze the provided text which contains accumulated research findings, potentially including previous summaries, search results, and extracted content. Your goal is to synthesize this information into a comprehensive, extensive, and well-structured final report on the topic: {topic}. Format in markdown. Include headings.
+You are an expert research analyst. Analyze the provided text which contains accumulated research findings. Your goal is to synthesize this information into a comprehensive, extensive, and well-structured final report on the topic: {topic}. Format in markdown. Include headings.
 
 Keep it balanced, and label contraversial viewpoints or facts as such.
 
@@ -307,13 +307,14 @@ Follow these instructions carefully:
 5.  **Acknowledge Limitations:** If the research highlights gaps, biases, or limitations (e.g., based only on specific types of sources), mention these briefly.
 6.  **Conciseness:** Be thorough but avoid unnecessary jargon or overly verbose language. Focus on conveying the essential information clearly.
 7.  **Topic Focus:** Ensure the entire report stays focused on the research topic: {topic}.
-8.  **Citations & Links (CRITICAL):** 
+8.  **Citations & Links (CRITICAL):**
     - As you write your summary, actively CREATE numbered citations [1], [2], etc. for important facts, findings, and quotes.
-    - Look for URLs in the accumulated content sections (marked with "BEGIN PROCESSED CONTENT from URL/Source:" or similar markers).
-    - When citing information from a source, assign it a citation number [1], [2], etc. and include that URL in your SOURCES section.
-    - Make sure to cite from multiple sources to provide balanced coverage.
-    - In the SOURCES section, list ONLY the URLs you've actually cited with numbers in your report, with format: "1. [URL]"
-    - If a URL appears multiple times in the content, only cite it once.
+    - When citing information from a source, assign it a citation number [1], [2], etc. and include that number in your SOURCES section at the end.
+    - In the SOURCES section, list ONLY the sources (URLs or refrence to data used via tool) that you have actually cited in the summary with a [n] number. Do NOT list any sources that are not referenced in the summary.
+    - For each source, provide the full direct link (not just a domain or title), using the format: `1. [URL]`
+    - If a cited fact is based on a tool result that does not have a URL, reference in a human-readable format in the SOURCES section so it makes sense to the reader.`.
+    - Ensure that every citation number [n] in the summary has a matching entry in the SOURCES section, and vice versa.
+    - If no sources are cited in the summary, briefly explain why in the SOURCES section.
 
 <Accumulated Content>
 {accumulated_content}

@@ -1004,8 +1004,21 @@ class ResearcherAgent:
             # If _run_research_core was called and set _current_accumulated_content, it will already be set
             # If the error happened before _run_research_core was called, set it to a default error message
             if not self._current_accumulated_content:
-                self._current_accumulated_content = f"Error occurred during research initialization: {str(e)}"
-            return f"Error occurred during research: {str(e)}"
+                self._current_accumulated_content = f"Research could not be completed due to an error: {e}"
+            
+            # Generate summary even if there was an error
+            try:
+                report = await self._generate_summary(
+                    topic=topic,
+                    accumulated_content=self._current_accumulated_content, 
+                    run_config=run_config,
+                    content_counts=processed_counts if 'processed_counts' in locals() else None
+                )
+                logger.info("Generated summary report despite research errors")
+                return report
+            except Exception as summary_error:
+                logger.error(f"Failed to generate summary after research error: {summary_error}", exc_info=True)
+                return f"Research failed: {e}\nCould not generate summary: {summary_error}"
             
         finally:
             # Clean up MCP client if we initialized it
@@ -1604,7 +1617,7 @@ class ResearcherAgent:
                         tool_args = normalize_tool_args(tool_args, tool_to_call)
 
                     # --- NEW: Additional URL validation for web_browser navigate_and_extract ---
-                    if tool_name == "web_browser" and isinstance(tool_args, dict) and tool_args.get("action") == "navigate_and_extract":
+                    if tool_name == "web_browser" and isinstance(tool_args, dict) and (tool_args.get("action") == "navigate_and_extract" or tool_args.get("action") == "extract"):
                         if not tool_args.get("url") and url_from_confirmation:
                             # We have a URL from confirmation but not in the arguments
                             tool_args["url"] = url_from_confirmation
@@ -1651,6 +1664,12 @@ class ResearcherAgent:
                     if not is_immediate_retry and tool_name in tool_map:
                         tool_to_call = tool_map[tool_name]
                         try:
+                            # Preprocess the tool arguments before execution
+                            preprocessed_args = self._preprocess_mcp_tool_args(tool_name, tool_args)
+                            if preprocessed_args != tool_args:
+                                logger.info(f"Preprocessed arguments for {tool_name}: {preprocessed_args}")
+                                tool_args = preprocessed_args
+                                
                             logger.info(f"Executing tool call: {tool_name} with args: {tool_args} (ID: {tool_call_id})")
                             
                             # --- Determine Function Identifier for Tracking/Limits --- #
@@ -1687,7 +1706,7 @@ class ResearcherAgent:
                             
                             # <<< INCREMENT COUNTERS *BEFORE* EXECUTION >>>
                             # --- Increment base tool total count ONLY for content extraction actions --- 
-                            is_content_extraction = (function_identifier == 'web_browser_navigate_and_extract') # Add other extraction functions if needed
+                            is_content_extraction = (function_identifier == 'web_browser_navigate_and_extract' or function_identifier == 'web_browser_extract') # Add other extraction functions if needed
                             if is_content_extraction:
                                 processed_counts['base_tool_calls'][base_tool_name] = current_total_count + 1
                                 base_tool_increment_log = f" (Incremented Total: {processed_counts['base_tool_calls'][base_tool_name]})"
@@ -1767,7 +1786,8 @@ class ResearcherAgent:
                                     extracted_data = None # Not valid JSON
                             
                             # Update flags (check tool_name and action again for clarity)
-                            is_web_extraction = (tool_name == 'web_browser' and isinstance(tool_args, dict) and tool_args.get('action') == 'navigate_and_extract')
+                            is_web_extraction = (tool_name == 'web_browser' and isinstance(tool_args, dict) and 
+                               (tool_args.get('action') == 'navigate_and_extract' or tool_args.get('action') == 'extract'))
                             is_reddit_extraction = (
                                 (tool_name == 'reddit_extract_post') or 
                                 (tool_name == 'reddit_search' and isinstance(tool_args, dict) and tool_args.get("extract_result_index") is not None)
@@ -1803,62 +1823,25 @@ class ResearcherAgent:
                                         accumulated_content += f"\n\n--- Skipped Empty/Errored Reddit Post: {post_url} ---\n"
                                     else:
                                         try:
+                                            # Store content with proper source attribution
+                                            reddit_content_data = {
+                                                "full_content": full_reddit_content,
+                                                "title": f"Reddit content from {post_url}"
+                                            }
+                                            # Store content with proper source type
+                                            if post_url and post_url != "Unknown URL":
+                                                self.content_manager.store_content(post_url, reddit_content_data, source_type="reddit")
+                                                
                                             logger.info(f"Generating summary for {source_desc}")
                                             summary = await self.content_manager.get_summary(post_url, content=full_reddit_content, callbacks=self.callbacks)
+                                            
+                                            # Mark this URL as used in the summary
+                                            if post_url and post_url != "Unknown URL":
+                                                self.content_manager.mark_content_used_in_summary(post_url)
+                                                
                                             # --- MODIFIED CONTENT ACCUMULATION ---
                                             # Store both summary and full content for the final report
                                             full_content_to_add = full_reddit_content # Specific for Reddit
-                                            accumulated_content += (
-                                                f"\n\n--- BEGIN PROCESSED CONTENT from {source_desc} ---\n"
-                                                f"--- Summary ---\n"
-                                                f"{summary}\n"
-                                                f"--- Full Content (for final summary) ---\n"
-                                                f"{full_content_to_add}\n"
-                                                f"--- END PROCESSED CONTENT from {source_desc} ---\n\n"
-                                            )
-                                            # --- END MODIFICATION ---
-                                            logger.info(f"Added summary and full content for {source_desc} to accumulated_content (Summary length: {len(summary)}, Full length: {len(full_content_to_add)})")
-                                            processed_successfully = True
-                                            content_added_this_call = True # Summary was added
-                                        except Exception as e:
-                                            logger.error(f"Failed to get or add summary for {source_desc}: {e}", exc_info=True)
-                                            truncated_output = full_reddit_content[:5000] + "... [Content truncated due to summarization error]"
-                                            # --- MODIFIED ERROR ACCUMULATION ---
-                                            # Store truncated raw content when summarization fails
-                                            full_content_to_add = full_reddit_content # Specific for Reddit
-                                            # Use the already truncated version for the summary part in case of error
-                                            summary_fallback = truncated_output
-                                            accumulated_content += (
-                                                f"\n\n--- BEGIN FAILED-SUMMARY CONTENT from {source_desc} ---\n"
-                                                f"--- Summary (Fallback - Truncated Raw) ---\n"
-                                                f"{summary_fallback}\n"
-                                                f"--- Full Content (for final summary) ---\n"
-                                                f"{full_content_to_add}\n" # Add the original full content here
-                                                f"--- END FAILED-SUMMARY CONTENT from {source_desc} ---\n\n"
-                                            )
-                                            # --- END MODIFICATION ---
-                                            logger.warning(f"Using truncated raw content as summary fallback, but stored full content for final report for {source_desc}")
-                                            processed_successfully = False # Summarization failed, treat as not fully processed
-                                
-                                # --- Process Web Browser Navigate/Extract --- #
-                                elif is_web_extraction and output_str: # Ensure output_str is not empty
-                                    url = tool_args.get('url') if isinstance(tool_args, dict) else None
-                                    source_desc = f"URL/Source: {url or tool_name}"
-                                    processed_successfully = False
-
-                                    # Use output_str (result of universal extraction)
-                                    if not output_str or output_str.startswith("Error:"):
-                                        logger.warning(f"Skipping summarization for {source_desc} as tool output was empty or an error: {output_str}")
-                                        accumulated_content += f"\n\n--- Skipped Empty/Errored Source: {source_desc} ---\nTool Output: {output_str}\n"
-                                        tool_content_for_history = f"Error/Empty Output from {tool_name}: {output_str[:100]}..." # Update history
-                                    else:
-                                        # If we have valid content (string), try to summarize
-                                        try:
-                                            logger.info(f"Generating summary for extracted content from {source_desc}")
-                                            summary = await self.content_manager.get_summary(url or tool_name, content=output_str, callbacks=self.callbacks)
-                                            # --- MODIFIED CONTENT ACCUMULATION ---
-                                            # Store both summary and full content for the final report
-                                            full_content_to_add = output_str # Specific for web extraction
                                             accumulated_content += (
                                                 f"\n\n--- BEGIN PROCESSED CONTENT from {source_desc} ---\n"
                                                 f"--- Summary ---\n"
@@ -1890,14 +1873,7 @@ class ResearcherAgent:
                                             # --- END MODIFICATION ---
                                             logger.warning(f"Using truncated raw content as summary fallback, but stored full content for final report for {source_desc}")
                                             processed_successfully = False # Summarization failed, treat as not fully processed
-
-                                    # Increment counters based on successful processing (meaning summarization worked or it was skipped appropriately)
-                                    if processed_successfully:
-                                         processed_counts['regular_web_pages'] = processed_counts.get('regular_web_pages', 0) + 1 # <<< Increment specific counter
-                                         logger.info(f"Detected successful web extraction, 'regular_web_pages' count incremented to: {processed_counts['regular_web_pages']}")
-                                    elif not output_str.startswith("Error:"): # Don't log failure if the tool itself reported an error initially
-                                         logger.info(f"Web extraction for {source_desc} resulted in summarization failure or empty content, not incrementing count.")
-
+                                
                                 # --- Process Reddit Search List --- #
                                 elif is_reddit_search_list and isinstance(output_str, str) and "Searched Reddit for" in output_str:
                                     # Pass the #main-content HTML/text directly to the summarizer for table extraction.
@@ -2022,24 +1998,51 @@ class ResearcherAgent:
                             is_invalid_args_error = False
                             if mcp_exc.args and isinstance(mcp_exc.args[0], dict) and mcp_exc.args[0].get('code') == -32602:
                                 is_invalid_args_error = True
-                                logger.info(f"Error code is -32602 (Invalid Arguments) for {tool_name}. Attempting correction prompt.") # <<< CONFIRMATION LOG
+                                logger.info(f"Detected search_abstracts validation error. Attempting specialized correction.")
                             
                             if is_invalid_args_error:
                                 logger.warning(f"Detected invalid arguments error for {tool_name}. Attempting correction.")
                                 try:
-                                    # Use the new helper method to get correction suggestion
-                                    corrected_args_json = await self._get_tool_correction_suggestion(
+                                    # First try direct correction without LLM for efficiency
+                                    direct_correction = self._try_direct_correction(
                                         tool_name=tool_name, 
                                         failed_args=tool_args,
-                                        error_message=str(mcp_exc),
-                                        run_config=run_config
+                                        error_message=str(mcp_exc)
                                     )
+                                    
+                                    if direct_correction:
+                                        logger.info(f"Direct correction applied for {tool_name}: {direct_correction}")
+                                        corrected_args_json = direct_correction
+                                    else:
+                                        # If direct correction failed, try LLM-based correction
+                                        corrected_args_json = await self._get_tool_correction_suggestion(
+                                            tool_name=tool_name, 
+                                            failed_args=tool_args,
+                                            error_message=str(mcp_exc),
+                                            run_config=run_config
+                                        )
                                     
                                     if corrected_args_json:
                                         error_summary += f"\n\n[Correction Suggestion]:\n```json\n{json.dumps(corrected_args_json, indent=2)}\n```"
                                         logger.info(f"Successfully added correction suggestion for {tool_name} to error message.")
+                                        
+                                        # Store the fact that this tool was corrected once
+                                        if not hasattr(self, '_corrected_tools'):
+                                            self._corrected_tools = set()
+                                        self._corrected_tools.add(tool_name)
                                     else:
-                                        logger.warning(f"No valid correction suggestion generated for {tool_name}.")
+                                        # If no correction could be generated but tool has been corrected before,
+                                        # treat this as "no content" instead of an error
+                                        if hasattr(self, '_corrected_tools') and tool_name in self._corrected_tools:
+                                            logger.warning(f"Tool {tool_name} already had one correction attempt. Treating as no content.")
+                                            error_summary = f"No content available from {tool_name}. Moving on to the next research step."
+                                            # Don't increment consecutive errors for this case
+                                            tool_messages.append(
+                                                ToolMessage(content=error_summary, tool_call_id=tool_call_id)
+                                            )
+                                            continue
+                                        else:
+                                            logger.warning(f"No valid correction suggestion generated for {tool_name}.")
                                 except Exception as correction_err:
                                     logger.error(f"Error during correction process for {tool_name}: {correction_err}", exc_info=True)
                                     # error_summary remains the original error
@@ -2149,8 +2152,11 @@ class ResearcherAgent:
             # --- 2. Check Termination Conditions ---
             total_processed = self._calculate_total_processed(processed_counts) # Use helper
             if consecutive_errors >= 3:
-                logger.error("Too many consecutive errors (>=3). Aborting research.")
-                return f"Research failed after {consecutive_errors} consecutive errors."
+                logger.warning("Multiple consecutive errors (>=3) encountered. Continuing research but noting the errors.")
+                # Add a message to the history indicating the errors, but don't abort
+                error_msg = AIMessage(content=f"I've encountered {consecutive_errors} consecutive errors. I'll try a different approach.")
+                history.append(error_msg)
+                consecutive_errors = 0  # Reset the counter to allow continuing
             if total_processed >= effective_max_results:
                 logger.info(f"Effective maximum results ({effective_max_results}) processed based on plan. Moving to summary.")
                 break
@@ -2761,87 +2767,47 @@ class ResearcherAgent:
         run_config: Optional[RunnableConfig] = None,
         content_counts: Optional[Dict[str, int]] = None
     ) -> str:
-        """Generate a summary of the research."""
-        content_counts = content_counts or {}
-        run_config = run_config or {}
-        callbacks = run_config.get("callbacks", self.callbacks)
+        """Generate a final research summary with sources.
         
-        # Store for later use by token stats callback
-        self._current_accumulated_content = accumulated_content
+        Args:
+            topic: The research topic
+            accumulated_content: All accumulated content text
+            run_config: Optional LangChain runnable config
+            content_counts: Optional dictionary of content type counts
+            
+        Returns:
+            Formatted summary with references
+        """
+        callbacks = self._extract_callbacks(run_config)
         
         try:
-            logger.info("Generating final summary...")
-            
-            # Calculate total processed count using the helper method
-            total_processed = self._calculate_total_processed(content_counts)
-            logger.info(f"Total processed items for summary: {total_processed}")
-            
-            final_summary_input = {
-                "topic": topic,
-                "accumulated_content": accumulated_content,
-                "results_processed": total_processed  # Include the total count
-            }
-            logger.debug(f"Accumulated content length: {len(accumulated_content)}")
-            
-            # Get raw summary from primary LLM, not the intermediate summarizer
-            # Create a final summary prompt template using the primary LLM
-            summary_prompt_template = ChatPromptTemplate.from_messages([
-                SystemMessage(content="You are an expert research summarizer."), 
-                ("human", SUMMARY_PROMPT), # Expects {topic} and {accumulated_content}
-            ])
-            
-            # Use the primary LLM model with FINAL_SUMMARY_MAX_TOKENS limit
-            from config.settings import FINAL_SUMMARY_MAX_TOKENS, PRIMARY_MODEL_TYPE, PRIMARY_MODEL_NAME
-            
-            logger.info(f"Creating dedicated chain for final summary using primary model type: {PRIMARY_MODEL_TYPE}")
-            logger.info(f"Final summary token limit: {FINAL_SUMMARY_MAX_TOKENS}")
-            
-                        # Use the pre-initialized final_summary_llm instance
-            final_summary_llm_instance = self.final_summary_llm
-
-            if not final_summary_llm_instance:
-                logger.error("self.final_summary_llm is not initialized. Falling back to the intermediate summarization chain.")
-                # Fall back to self.summarization_chain if final LLM initialization failed
-                # Note: self.summarization_chain is already built using the intermediate summarizer
-                tagged_config = run_config.copy()
-                tagged_config["tags"] = tagged_config.get("tags", []) + ["final_summary_llm_fallback"]
-                final_summary_msg = await self.summarization_chain.ainvoke(
-                    final_summary_input,
-                    config=tagged_config
-                )
+            # First try to get summary over content
+            if self.content_manager and accumulated_content:
+                # Generate a summary using the content manager
+                logger.info(f"Generating final summary for topic: '{topic}'")
+                # Pass topic to _summarize_content
+                summary = await self._summarize_content(topic, accumulated_content) # <<< CHANGE: Pass topic
+                
+                # Generate sources section from content manager's tracked sources
+                sources_section = self.content_manager.generate_sources_section()
+                
+                # Combine summary and sources in the required format
+                formatted_summary = f"---SUMMARY_START---\n{summary}\n---SUMMARY_END---\n\n{sources_section}"
+                
+                logger.info(f"Generated formatted summary with sources section")
+                return formatted_summary
             else:
-                # Create the final summary chain using the pre-initialized LLM
-                model_identifier = getattr(final_summary_llm_instance, 'model', getattr(final_summary_llm_instance, 'model_name', 'Unknown Final Summarizer'))
-                logger.info(f"Using pre-initialized LLM model {model_identifier} for final summary")
-                # Rebuild the prompt template locally as it's simple
-                summary_prompt_template = ChatPromptTemplate.from_messages([
-                    SystemMessage(content="You are an expert research summarizer."),
-                    ("human", SUMMARY_PROMPT), # Expects {topic} and {accumulated_content}
-                ])
-                final_summary_chain = summary_prompt_template | final_summary_llm_instance
-
-                tagged_config = run_config.copy()
-                tagged_config["tags"] = tagged_config.get("tags", []) + ["final_summary_llm"]
-
-                final_summary_msg = await final_summary_chain.ainvoke(
-                    final_summary_input,
-                    config=tagged_config
-                )
-
-            raw_summary = final_summary_msg.content
-            
-            # Process the structured output to extract and format summary + references
-            logger.info("Processing structured summary output")
-            processed_summary = await self._post_process_summary(raw_summary, accumulated_content)
-            
-            logger.info("Successfully generated final summary content (excluding token stats)")
-            return processed_summary # Return only summary + references
-            
+                # Fallback if no content manager or accumulated content
+                logger.warning("No content manager or accumulated content for summary. Using fallback approach.")
+                # Generate empty sources section
+                empty_sources = "---SOURCES_START---\nNo sources were collected during research.\n---SOURCES_END---"
+                return f"---SUMMARY_START---\nNo research content was collected on the topic '{topic}'.\n---SUMMARY_END---\n\n{empty_sources}"
         except Exception as e:
-            logger.error(f"Error generating final summary: {e}", exc_info=True)
-            # Add basic error information to the accumulated content
-            error_msg = f"\n\n### ERROR DURING SUMMARIZATION\n\nAn error occurred while generating the final summary: {str(e)}\n\n"
-            return accumulated_content + error_msg
+            # Handle errors gracefully
+            logger.error(f"Error generating summary: {e}", exc_info=True)
+            error_summary = f"An error occurred while generating the research summary: {e}"
+            error_sources = "---SOURCES_START---\nSources unavailable due to error.\n---SOURCES_END---"
+            return f"---SUMMARY_START---\n{error_summary}\n---SUMMARY_END---\n\n{error_sources}"
 
     def _get_token_usage_statistics(self) -> str:
         """Get token usage statistics for the current research run.
@@ -2993,11 +2959,40 @@ class ResearcherAgent:
             
         return "\n".join(token_table)
 
-    async def _summarize_content(self, content: str) -> str:
-        if not self.summarization_llm:
-            logger.error("No summarization LLM available. Returning original content.")
-            return content
-        # ... use self.summarization_llm for summarization ...
+    async def _summarize_content(self, topic: str, content: str) -> str:
+        """Summarize the provided content using the final_summary_llm and SUMMARY_PROMPT."""
+        # <<< CHANGE: Use self.final_summary_llm >>>
+        if not self.final_summary_llm: 
+            logger.error("No final_summary_llm available. Cannot generate summary.")
+            return "[Summary generation failed: Final Summary LLM not available]"
+        
+        logger.info(f"Attempting final summarization using final_summary_llm and SUMMARY_PROMPT for topic: '{topic}'")
+        
+        try:
+            # Format the imported SUMMARY_PROMPT
+            prompt_str = SUMMARY_PROMPT.format(topic=topic, accumulated_content=content)
+            messages = [HumanMessage(content=prompt_str)]
+            
+            # Pass callbacks if available
+            callbacks = getattr(self, 'callbacks', None)
+            run_config = {"callbacks": callbacks} if callbacks else None
+            
+            # <<< CHANGE: Invoke self.final_summary_llm >>>
+            response = await self.final_summary_llm.ainvoke(messages, config=run_config)
+            
+            summary_text = getattr(response, 'content', None)
+
+            if summary_text:
+                logger.info(f"Successfully generated final summary using final_summary_llm (length: {len(summary_text)} chars)")
+                # Assume the LLM followed the prompt format including delimiters
+                return summary_text 
+            else:
+                logger.error("final_summary_llm returned empty response or no content for final summary.")
+                return "[Summary generation failed: LLM returned empty response]"
+
+        except Exception as e:
+            logger.error(f"Exception during final summarization with final_summary_llm: {e}", exc_info=True)
+            return f"[Summary generation failed: {e}]"
 
     def _extract_structured_confirmation(self, content: str) -> Tuple[Optional[str], Dict[str, Any]]:
         """Extract the structured action confirmation if present.
@@ -3254,7 +3249,7 @@ class ResearcherAgent:
                 canonical_arg = tool_args.get("url")
             elif tool_name == "web_browser" and tool_args.get("action") == "search":
                 canonical_arg = tool_args.get("query")
-            elif tool_name == "web_browser" and tool_args.get("action") == "navigate_and_extract":
+            elif tool_name == "web_browser" and (tool_args.get("action") == "navigate_and_extract" or tool_args.get("action") == "extract"):
                 canonical_arg = tool_args.get("url")
             elif tool_name == "reddit_search":
                 canonical_arg = tool_args.get("query")
@@ -3286,7 +3281,7 @@ class ResearcherAgent:
                     if isinstance(tool_args, dict):
                         if tool_name == "get_transcripts": canonical_arg_val = tool_args.get("url", str(tool_args))
                         elif tool_name == "web_browser" and tool_args.get("action") == "search": canonical_arg_val = tool_args.get("query", str(tool_args))
-                        elif tool_name == "web_browser" and tool_args.get("action") == "navigate_and_extract": canonical_arg_val = tool_args.get("url", str(tool_args))
+                        elif tool_name == "web_browser" and (tool_args.get("action") == "navigate_and_extract" or tool_args.get("action") == "extract"): canonical_arg_val = tool_args.get("url", str(tool_args))
                         # Add more tool-specific canonical args if needed
                     
                     if call_id and tool_name and canonical_arg_val:
@@ -3312,7 +3307,7 @@ class ResearcherAgent:
                     if isinstance(tool_args, dict):
                         if tool_name == "get_transcripts": canonical_arg_val = tool_args.get("url", str(tool_args))
                         elif tool_name == "web_browser" and tool_args.get("action") == "search": canonical_arg_val = tool_args.get("query", str(tool_args))
-                        elif tool_name == "web_browser" and tool_args.get("action") == "navigate_and_extract": canonical_arg_val = tool_args.get("url", str(tool_args))
+                        elif tool_name == "web_browser" and (tool_args.get("action") == "navigate_and_extract" or tool_args.get("action") == "extract"): canonical_arg_val = tool_args.get("url", str(tool_args))
                     
                     if call_id and tool_name and canonical_arg_val:
                          intent = (tool_name, canonical_arg_val)
@@ -3480,7 +3475,7 @@ class ResearcherAgent:
             from config.prompts import TOOL_CORRECTION_PROMPT
             from langchain_core.output_parsers import StrOutputParser
             
-            # Use the next_step_llm for correction logic if available, otherwise fall back to primary LLM
+            # Use the primary llm for correction logic
             correction_llm = self.llm_client
             correction_chain = TOOL_CORRECTION_PROMPT | correction_llm | StrOutputParser()
             
@@ -3518,7 +3513,7 @@ class ResearcherAgent:
     def _try_direct_correction(self, tool_name: str, failed_args: Dict[str, Any], error_message: str) -> Optional[Dict[str, Any]]:
         """Attempt to directly correct arguments based on error patterns without requiring LLM.
         
-        This handles common patterns like missing nested fields (e.g., request.term).
+        This handles common patterns like missing nested fields in a generic way.
         
         Args:
             tool_name: Name of the tool that failed
@@ -3528,29 +3523,62 @@ class ResearcherAgent:
         Returns:
             Corrected arguments or None if direct correction is not possible
         """
+        # First apply our general preprocessing logic
+        processed_args = self._preprocess_mcp_tool_args(tool_name, failed_args)
+        
+        # If preprocessing changed the arguments, it might have fixed the issue
+        if processed_args != failed_args:
+            logger.info(f"Preprocessor modified arguments for {tool_name}, attempting with preprocessed args")
+            return processed_args
+        
         # Check for nested path errors (e.g., "request.term")
         nested_field_match = re.search(r"(\w+)\.(\w+).*Field required", error_message)
         
         if nested_field_match:
             parent_field, child_field = nested_field_match.groups()
             
-            # Handle the case where a simple query/term parameter needs to be nested
-            if 'query' in failed_args and child_field == 'term':
-                return {parent_field: {'term': failed_args['query']}}
-                
-            # Handle other common synonym mappings for nested structures
+            # Generic pattern: any matching top-level key should be moved into the required nested structure
+            # Common synonyms that might be applicable across multiple tools
             synonyms = {
-                'query': 'term',
-                'q': 'term',
-                'search': 'term',
-                'text': 'content',
-                'input': 'content',
-                'keywords': 'term',
+                "query": ["term", "q", "search", "keywords"],
+                "content": ["text", "input", "body"],
+                "text": ["content", "input", "body"],
+                "term": ["query", "q", "search", "keywords"]
             }
             
-            for synonym, canonical in synonyms.items():
-                if synonym in failed_args and canonical == child_field:
-                    return {parent_field: {child_field: failed_args[synonym]}}
+            # Check if we have any key that could be a synonym for the missing field
+            for key in failed_args:
+                # Direct match to the missing child field
+                if key == child_field:
+                    # Create a new object with the nested structure
+                    corrected = {parent_field: {child_field: failed_args[key]}}
+                    # Copy over any other fields that might be at the parent level
+                    if parent_field in failed_args and isinstance(failed_args[parent_field], dict):
+                        for k, v in failed_args[parent_field].items():
+                            if k != child_field:  # Don't overwrite our correction
+                                corrected[parent_field][k] = v
+                    return corrected
+                
+                # Check if the key is a synonym for the required field
+                for base_field, synonyms_list in synonyms.items():
+                    if child_field == base_field and key in synonyms_list:
+                        # Create a new object with the nested structure
+                        corrected = {parent_field: {child_field: failed_args[key]}}
+                        # Copy over any other fields that might be at the parent level
+                        if parent_field in failed_args and isinstance(failed_args[parent_field], dict):
+                            for k, v in failed_args[parent_field].items():
+                                if k != child_field:  # Don't overwrite our correction
+                                    corrected[parent_field][k] = v
+                        return corrected
+                    elif key == base_field and child_field in synonyms_list:
+                        # Create a new object with the nested structure
+                        corrected = {parent_field: {child_field: failed_args[key]}}
+                        # Copy over any other fields that might be at the parent level
+                        if parent_field in failed_args and isinstance(failed_args[parent_field], dict):
+                            for k, v in failed_args[parent_field].items():
+                                if k != child_field:  # Don't overwrite our correction
+                                    corrected[parent_field][k] = v
+                        return corrected
         
         # Check for completely missing parent object
         parent_missing_match = re.search(r"(\w+)\s+Field required", error_message)
@@ -3558,14 +3586,29 @@ class ResearcherAgent:
         if parent_missing_match and not nested_field_match:
             parent_field = parent_missing_match.group(1)
             
-            # If we have query but need parent.term structure
-            if 'query' in failed_args:
-                # For search_abstracts and similar tools expecting request.term structure
-                if tool_name == 'search_abstracts' or 'abstract' in tool_name:
-                    return {parent_field: {'term': failed_args['query']}}
-                    
-                # Generic handling - assume the parent is a container for the query
-                return {parent_field: failed_args}
+            # Create empty parent object if it's missing
+            if parent_field not in failed_args:
+                # Look for any parameter that might make sense to put in this object
+                # Common patterns for parameter movements
+                # If we found certain keys at the top level, move them into parent object
+                potential_child_keys = ["query", "term", "text", "content", "input", "url", "id", "prompt"]
+                corrected = {parent_field: {}}
+                
+                # Copy any potential child keys from the top level
+                for key in potential_child_keys:
+                    if key in failed_args:
+                        corrected[parent_field][key] = failed_args[key]
+                
+                # If we made any changes, return the corrected args
+                if corrected[parent_field]:
+                    # Copy all other top-level keys that weren't moved
+                    for key, value in failed_args.items():
+                        if key not in potential_child_keys:
+                            corrected[key] = value
+                    return corrected
+                
+                # If we couldn't find any keys to move, just create empty parent
+                return {parent_field: {}, **{k: v for k, v in failed_args.items() if k != parent_field}}
                 
         # Fall back to standard LLM-based correction if we can't detect a pattern
         return None
@@ -3583,10 +3626,12 @@ class ResearcherAgent:
         # First use the global normalize_tool_args helper function
         normalized_args = normalize_tool_args(tool_args, tool)
         
-        # Special handling for specific tool types or patterns
+        # Now apply our preprocessing logic to handle JSON strings and other normalization
         tool_name = getattr(tool, 'name', None)
+        if tool_name:
+            normalized_args = self._preprocess_mcp_tool_args(tool_name, normalized_args)
         
-        # Special handling for web_browser tool
+        # Special handling for specific tool types or patterns
         if tool_name == 'web_browser':
             # Ensure action parameter is a string
             if 'action' in normalized_args:
@@ -3610,7 +3655,7 @@ class ResearcherAgent:
                     
             if 'post_url' in normalized_args and not isinstance(normalized_args['post_url'], str):
                 normalized_args['post_url'] = str(normalized_args['post_url'])
-                
+        
         # Return the normalized arguments
         return normalized_args
 
@@ -3770,3 +3815,108 @@ class ResearcherAgent:
         except Exception as e:
             logger.warning(f"Error fetching title for URL {url}: {e}")
             return None
+
+    def _extract_callbacks(self, run_config: Optional[Dict[str, Any]] = None) -> Optional[List[BaseCallbackHandler]]:
+        """Extract callbacks from a runnable config.
+        
+        Args:
+            run_config: Optional runnable config dictionary
+            
+        Returns:
+            List of callback handlers or None
+        """
+        if run_config is None:
+            return self.callbacks
+            
+        return run_config.get("callbacks", self.callbacks)
+
+    # Add this method before the _run_research_core method
+    def _preprocess_mcp_tool_args(self, tool_name: str, tool_args: Dict[str, Any]) -> Dict[str, Any]:
+        """Preprocess arguments for MCP tools before they're sent to the tool.
+        
+        This method handles common argument normalization patterns for MCP tools:
+        - Converting JSON strings to dictionaries
+        - Managing nested parameters
+        - Handling quoted string values
+        
+        Args:
+            tool_name: The name of the tool being called
+            tool_args: The arguments dictionary to preprocess
+            
+        Returns:
+            Normalized arguments dictionary
+        """
+        if not tool_args:
+            return tool_args
+            
+        # Create a copy to avoid modifying the original
+        normalized_args = tool_args.copy()
+        
+        # Process any string values that might be JSON
+        for key, value in list(normalized_args.items()):
+            if isinstance(value, str) and value.strip().startswith('{') and value.strip().endswith('}'):
+                try:
+                    parsed_dict = json.loads(value)
+                    if isinstance(parsed_dict, dict):
+                        normalized_args[key] = parsed_dict
+                        logger.debug(f"Converted string to dict for {key}: {parsed_dict}")
+                except json.JSONDecodeError:
+                    # Not valid JSON, leave as is
+                    pass
+            elif isinstance(value, str):
+                # Remove quotes from string values (common model output issue)
+                if value.startswith('"') and value.endswith('"') or value.startswith("'") and value.endswith("'"):
+                    normalized_args[key] = value[1:-1]
+                    logger.debug(f"Removed quotes from {key}: {normalized_args[key]}")
+        
+        # Generic handling for nested parameters without tool-specific logic
+        # Look for common parameter movements (e.g., query to request.term)
+        common_nesting_patterns = [
+            # Check for [top-level key] + [object without that key as nested field]
+            # For example: query at top level + request object without 'term' or 'query' inside
+            {"from_key": "query", "to_object": "request", "to_key": "term"},
+            {"from_key": "query", "to_object": "request", "to_key": "query"},
+            {"from_key": "text", "to_object": "request", "to_key": "content"},
+            {"from_key": "input", "to_object": "request", "to_key": "content"}
+        ]
+        
+        # Check each pattern
+        for pattern in common_nesting_patterns:
+            from_key = pattern["from_key"]
+            to_object = pattern["to_object"]
+            to_key = pattern["to_key"]
+            
+            # If we have the top-level key and the object exists but doesn't have the nested key
+            if (from_key in normalized_args and 
+                to_object in normalized_args and 
+                isinstance(normalized_args[to_object], dict) and
+                to_key not in normalized_args[to_object]):
+                
+                # Move the value to the nested location
+                normalized_args[to_object][to_key] = normalized_args[from_key]
+                # Remove the top-level key to avoid confusion
+                del normalized_args[from_key]
+                logger.debug(f"Moved {from_key} to {to_object}.{to_key}: {normalized_args}")
+                break  # Only apply one pattern
+        
+        # Check for keys inside objects that might need to be renamed
+        # For example: request.query -> request.term
+        for key, value in normalized_args.items():
+            if isinstance(value, dict):
+                common_field_mappings = {
+                    "query": "term",
+                    "q": "term",
+                    "search": "term",
+                    "text": "content",
+                    "input": "content"
+                }
+                
+                for from_field, to_field in common_field_mappings.items():
+                    # If object has source field but not destination field
+                    if from_field in value and to_field not in value:
+                        value[to_field] = value[from_field]
+                        # Keep original key for backward compatibility
+                        # unless we're certain it should be removed
+                        logger.debug(f"Added {key}.{to_field} from {key}.{from_field}")
+        
+        return normalized_args

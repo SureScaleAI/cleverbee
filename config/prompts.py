@@ -337,27 +337,30 @@ Be precise with these delimiters - they will be used for automated processing.
 # --- Tool Correction Prompt --- #
 
 TOOL_CORRECTION_PROMPT = PromptTemplate.from_template("""
-A previous attempt to call a tool failed due to invalid arguments. Your task is to correct the arguments based on the tool's description and the error message.
+A previous attempt to call a tool failed due to invalid arguments. Your task is to correct the arguments based on the tool's schema and the error message.
 
-**Failed Tool Call:**
+<Failed Tool Call>
 - Tool Name: {tool_name}
 - Provided Arguments: {failed_args}
+</Failed Tool Call>
 
-**Error Message:**
+<Error Message>
 {error_message}
+</Error Message>
 
-**Tool Description/Schema:**
+<Tool Description and Schema>
 {tool_description}
+</Tool Description and Schema>
 
 **Instructions:**
-1. Analyze the error message and the expected schema from the description.
+1. Analyze the error message and the expected schema.
 2. Identify the specific mistake(s) in the provided arguments (e.g., wrong parameter name, incorrect data type, missing required parameter).
 3. If the tool expects a dictionary with a single required key (for example, 'term'), and you are given a string, wrap the string in a dictionary with that key (e.g., {"term": "your string"}).
 4. Generate the **corrected arguments** ONLY.
 5. **Output ONLY the corrected arguments as a valid JSON object.** Do not include any other text, explanations, or markdown formatting.
 6. **CRITICAL SCHEMA ADHERENCE:** Pay extremely close attention to the tool description/schema, ensuring you use the exact parameter names and correct data types specified.
 
-Corrected Arguments (JSON only):
+Output the correct JSON only.
 """)
 
 # --- Tool Metadata for LLM --- #

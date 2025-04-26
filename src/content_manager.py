@@ -1,6 +1,6 @@
 import logging
 import asyncio
-from typing import Dict, Any, List, Optional, Tuple
+from typing import Dict, Any, List, Optional, Tuple, Set
 import hashlib
 import re
 import uuid
@@ -58,6 +58,66 @@ def extract_mcp_content_universal(tool_output: Any) -> Optional[str]:
 
 logger = logging.getLogger(__name__)
 
+class ContentItem:
+    """Represents a single content item with source tracking metadata."""
+    
+    def __init__(self, content: str, source_url: str, source_type: str, title: str = None, metadata: Dict[str, Any] = None):
+        """Initialize a ContentItem.
+        
+        Args:
+            content: The actual content text
+            source_url: Complete URL where the content was sourced from
+            source_type: Type of source (e.g., "web", "reddit", "pubmed")
+            title: Optional title for the content 
+            metadata: Additional metadata about the content
+        """
+        self.content = content
+        self.source_url = source_url
+        self.source_type = source_type
+        self.title = title or "Unknown Title"
+        self.metadata = metadata or {}
+        self.timestamp = datetime.now()
+        self.used_in_summary = False  # Tracks if this content was used in final summary
+        self.content_id = self._generate_content_id(source_url)
+        self.documents = []  # Will hold chunked documents
+        
+    def _generate_content_id(self, url: str) -> str:
+        """Generate a short hash identifier for a URL."""
+        return hashlib.md5(url.encode()).hexdigest()[:8]
+    
+    def create_documents(self, splitter, chunking_enabled: bool = True) -> List[Document]:
+        """Create LangChain documents from this content item.
+        
+        Args:
+            splitter: RecursiveCharacterTextSplitter instance to use
+            chunking_enabled: Whether to chunk the content
+            
+        Returns:
+            List of Document objects
+        """
+        metadata = {
+            "source": self.source_url,
+            "title": self.title,
+            "content_id": self.content_id,
+            "source_type": self.source_type,
+            "estimated_tokens": _estimate_token_count(self.content)
+        }
+        
+        # Add any additional metadata
+        metadata.update(self.metadata)
+        
+        try:
+            if chunking_enabled:
+                self.documents = splitter.create_documents([self.content], metadatas=[metadata])
+            else:
+                self.documents = [Document(page_content=self.content, metadata=metadata)]
+                
+            return self.documents
+        except Exception as e:
+            logger.error(f"Error processing document for {self.source_url}: {e}", exc_info=True)
+            self.documents = [Document(page_content=f"[Error processing content: {e}]", metadata=metadata)]
+            return self.documents
+
 class ContentManager:
     """Manages web content using LangChain Documents, TextSplitters, and summarization chains.
 
@@ -94,6 +154,10 @@ class ContentManager:
         self.documents: Dict[str, List[Document]] = {}
         self.summaries: Dict[str, str] = {}
         self.content_hash_map: Dict[str, str] = {}
+        
+        # New content tracking with improved source attribution
+        self.content_items: Dict[str, ContentItem] = {}
+        self.used_content_items: Set[str] = set()  # Track content IDs used in summary
 
         # Splitter
         self.splitter = RecursiveCharacterTextSplitter(
@@ -250,78 +314,117 @@ class ContentManager:
             docs: List of LangChain Document objects
             
         Returns:
-            Estimated token count for the combined documents
+            Estimated token count
         """
-        # Combine all document content and estimate tokens
-        all_text = " ".join([doc.page_content for doc in docs])
-        return _estimate_token_count(all_text)
-
+        # Sum up estimated tokens from each document
+        total_tokens = sum(_estimate_token_count(doc.page_content) for doc in docs)
+        return total_tokens
+        
     def _select_and_load_local_model(self, content: str) -> Tuple[Optional[BaseChatModel], Optional[str]]:
-        """Attempts to load the local LLM and returns it, or None and an error message."""
-        if self.local_llm:
-             return self.local_llm, None # Return cached instance if already loaded
-             
+        """Select and load a local model for summarization.
+        
+        Args:
+            content: The content to summarize, used for size estimation.
+            
+        Returns:
+            Tuple of (model, error_message)
+        """
         try:
-            self.local_llm = get_llm_client(
-                provider="local",
-                model_name=self.summarizer_model,
-                is_summary_client=True,
-                is_local_client=True,
-                content_size=_estimate_token_count(content)
-            )
-            logger.info(f"Successfully initialized local summarizer: {self.summarizer_model}")
+            if self.local_llm is None:
+                # Initialize local LLM on first use
+                logger.info(f"Loading local model: {self.summarizer_model}")
+                self.local_llm = get_llm_client(self.summarizer_model, local=True, model_kwargs={})
+                
             return self.local_llm, None
         except Exception as e:
-            error_msg = f"Failed to initialize configured local summarizer model '{self.summarizer_model}': {e}"
+            error_msg = f"Failed to load local model: {e}"
             logger.error(error_msg)
-            raise RuntimeError(error_msg + ". Local models are required (USE_LOCAL_SUMMARIZER_MODEL=True). Exiting.")
+            return None, error_msg
 
-    def store_content(self, url: str, content_data: Dict[str, Any]) -> str:
-        """Store content from a URL as chunked LangChain Documents.
+    def store_content(self, url: str, content_data: Dict[str, Any], source_type: str = "web") -> str:
+        """Store content from a URL as a ContentItem with proper source tracking.
 
         Args:
             url: The source URL
             content_data: Dictionary containing content data (title, full_content)
+            source_type: Type of source (e.g., "web", "reddit", "pubmed")
 
         Returns:
             content_id: A unique identifier for the content
         """
-        content_id = self._generate_content_id(url)
-        self.content_hash_map[content_id] = url
-
+        # Extract content from content_data
         full_content = content_data.get("full_content", "")
         title = content_data.get("title", "Unknown Title")
-
+        
+        # Create additional metadata from any other fields in content_data
+        metadata = {k: v for k, v in content_data.items() if k not in ["full_content", "title"]}
+        
+        # Create a ContentItem for better source tracking
+        content_item = ContentItem(
+            content=full_content,
+            source_url=url,
+            source_type=source_type,
+            title=title,
+            metadata=metadata
+        )
+        
+        # Generate a content ID and store mappings
+        content_id = content_item.content_id
+        self.content_hash_map[content_id] = url
+        
+        # Store the ContentItem
+        self.content_items[url] = content_item
+        
+        # Create documents using the ContentItem's method and store in traditional storage
         if not full_content:
             logger.warning(f"No content provided for URL: {url}. Storing empty document list.")
             self.documents[url] = []
-            return content_id
-
-        # Create metadata for the documents
-        metadata = {
-            "source": url,
-            "title": title,
-            "content_id": content_id,
-            # Store token estimation for model selection
-            "estimated_tokens": _estimate_token_count(full_content)
-        }
-
-        # Split the content into Document chunks if chunking is enabled
-        try:
-            if self.use_chunking:
-                docs = self.splitter.create_documents([full_content], metadatas=[metadata])
-                logger.info(f"Split content from {url} into {len(docs)} chunks (ID: {content_id})")
-            else:
-                # Create a single document without splitting
-                docs = [Document(page_content=full_content, metadata=metadata)]
-                logger.info(f"Stored content from {url} as a single document (chunking disabled)")
-                
+            content_item.documents = []
+        else:
+            # Create and store documents
+            docs = content_item.create_documents(self.splitter, self.use_chunking)
             self.documents[url] = docs
-        except Exception as e:
-             logger.error(f"Error processing document for {url}: {e}", exc_info=True)
-             self.documents[url] = [Document(page_content=f"[Error processing content: {e}]", metadata=metadata)] # Store error marker
+            
+            logger.info(f"Stored content from {url} as {len(docs)} documents with source type '{source_type}' (ID: {content_id})")
 
         return content_id
+        
+    def mark_content_used_in_summary(self, url_or_id: str):
+        """Mark a content item as used in the summary.
+        
+        Args:
+            url_or_id: URL or content ID
+        """
+        url = self.content_hash_map.get(url_or_id, url_or_id)
+        if url in self.content_items:
+            self.content_items[url].used_in_summary = True
+            self.used_content_items.add(url)
+            logger.info(f"Marked content from {url} as used in summary")
+            
+    def generate_sources_section(self) -> str:
+        """Generate a properly formatted sources section for the final output.
+        
+        Returns:
+            Formatted sources section string with all used sources
+        """
+        sources = []
+        
+        # Include all content items marked as used in summary
+        for url in self.used_content_items:
+            if url in self.content_items:
+                item = self.content_items[url]
+                sources.append(f"{item.source_url}")
+                
+        # If no sources were marked, include all content items as fallback
+        if not sources and self.content_items:
+            logger.warning("No content items were explicitly marked as used. Including all sources as fallback.")
+            for url, item in self.content_items.items():
+                sources.append(f"{item.source_url}")
+                
+        if sources:
+            return "---SOURCES_START---\n" + "\n".join(sources) + "\n---SOURCES_END---"
+        else:
+            return "---SOURCES_START---\nNo sources were used.\n---SOURCES_END---"
 
     async def get_summary(self, url_or_id: str, callbacks: Optional[List[BaseCallbackHandler]] = None, content: Optional[str] = None) -> str:
         """Get a summary for a URL/ID or directly provided content.
@@ -355,12 +458,28 @@ class ContentManager:
             else:
                 docs = [Document(page_content=content, metadata=metadata)]
                 logger.info(f"Created single document from directly provided content (chunking disabled)")
+                
+            # Store this content temporarily if it's not already stored
+            if url not in self.content_items:
+                temp_content_item = ContentItem(
+                    content=content,
+                    source_url=url,
+                    source_type="direct",
+                    title="Direct Content",
+                    metadata=metadata
+                )
+                self.content_items[url] = temp_content_item
         else:
             if url in self.summaries:
+                # If we already have a summary, mark this content as used
+                if url in self.content_items:
+                    self.mark_content_used_in_summary(url)
                 return self.summaries[url]
+                
             if url not in self.documents or not self.documents[url]:
                 logger.warning(f"No content/documents found for URL/ID: {url_or_id}")
                 return f"[No content available for {url_or_id}]"
+                
             docs = self.documents[url]
         # --- End Get Documents --- 
 
@@ -474,13 +593,42 @@ class ContentManager:
                     final_summary = "[Summary generation failed: Unexpected output type]"
                 # --- END FIX ---
                 logger.info(f"Generated summary using {model_desc} for {url} - {len(final_summary)} chars")
+                
+                # Mark this content as used in summary upon successful generation
+                self.mark_content_used_in_summary(url)
+                
             except Exception as e:
                 logger.error(f"Error generating summary with {model_desc}: {e}", exc_info=True)
-                final_summary = f"[Summary generation failed with {model_desc}: {e}]"
-        # --- End Run Summarization --- 
-
-        # Store and return the summary (or error message)
+                
+                # If we have a fallback chain and aren't already using it
+                if chain_to_use is not self.summary_chain_fallback and self.summary_chain_fallback:
+                    logger.info(f"Trying fallback chain after error with {model_desc}")
+                    try:
+                        result = await self.summary_chain_fallback.ainvoke(
+                            {"input_documents": docs},
+                            {"callbacks": callbacks}
+                        )
+                        
+                        # Process result from fallback chain
+                        if isinstance(result, dict):
+                            final_summary = result.get("output_text", "[Summary generation failed: No output text]")
+                        elif isinstance(result, str):
+                            final_summary = result
+                        else:
+                            logger.warning(f"Unexpected result type from fallback chain: {type(result)}")
+                            final_summary = f"[Summary generation failed: {e}]"
+                            
+                        # Mark as used if fallback succeeded
+                        self.mark_content_used_in_summary(url)
+                    except Exception as fallback_e:
+                        logger.error(f"Fallback summarization also failed: {fallback_e}", exc_info=True)
+                        final_summary = f"[Summary generation failed: {e}]"
+                else:
+                    final_summary = f"[Summary generation failed: {e}]"
+                
+        # --- Cache the summary ---
         self.summaries[url] = final_summary
+        
         return final_summary
 
     async def get_content_preview(self, url: str, callbacks: Optional[List[BaseCallbackHandler]] = None) -> Dict[str, Any]:

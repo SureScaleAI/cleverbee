@@ -390,4 +390,6 @@ Based on the original research topic, research plan, and {content_type_descripti
 Use the content as your knowledge base for answering, and clearly state if information about a specific aspect of the query is not available in the provided content.
 
 Format your response in markdown, and maintain the same level of detail and citation style as in the original research summary.
+
+Important: Remember ALWAYS to cite things in the content (in [1], [2], etc. style) with the full links to the sources at the end under a "References" section.
 """

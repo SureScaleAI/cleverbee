@@ -1,6 +1,6 @@
 import asyncio
 import logging
-from typing import Dict, Any, List, Tuple, Optional, Set, Union
+from typing import Dict, Any, List, Tuple, Optional, Set, Union, Callable, Awaitable
 from datetime import datetime
 import json
 import re
@@ -15,6 +15,7 @@ import functools
 import urllib.parse
 import logging.handlers
 import ast
+import aiohttp
 
 # LangChain core components
 from langchain_core.language_models.chat_models import BaseChatModel
@@ -161,15 +162,29 @@ def normalize_tool_args(tool_args, tool):
     # Only operate on dicts
     if not isinstance(tool_args, dict):
         return tool_args
+    
     # Try to get the expected keys from the tool's args_schema (if available)
     expected_keys = set()
+    nested_paths = set()  # New: Track nested paths like "request.term"
     schema = getattr(tool, 'args_schema', None)
+    
     if schema and isinstance(schema, dict):
         expected_keys = set(schema.keys())
     elif schema and hasattr(schema, 'model_fields'):  # Pydantic v2
         expected_keys = set(schema.model_fields.keys())
+        # Try to find nested field patterns by checking for any nested Pydantic models
+        for field_name, field in schema.model_fields.items():
+            if hasattr(field, 'annotation') and hasattr(field.annotation, 'model_fields'):
+                for nested_field in field.annotation.model_fields:
+                    nested_paths.add(f"{field_name}.{nested_field}")
     elif schema and hasattr(schema, '__fields__'):    # Pydantic v1
         expected_keys = set(schema.__fields__.keys())
+        # Similar attempt for Pydantic v1
+        for field_name, field in schema.__fields__.items():
+            if hasattr(field, 'type_') and hasattr(field.type_, '__fields__'):
+                for nested_field in field.type_.__fields__:
+                    nested_paths.add(f"{field_name}.{nested_field}")
+    
     # Common synonym mapping (add more as needed)
     synonym_map = {
         'query': 'term',
@@ -179,8 +194,29 @@ def normalize_tool_args(tool_args, tool):
         'input': 'content',
         'keywords': 'term',
     }
+    
     # Build a reverse map for all expected keys
     reverse_map = {v: k for k, v in synonym_map.items() if v in expected_keys}
+    
+    # Special handling for nested path errors (e.g., "request.term")
+    # Extract parent objects and nested fields from error paths
+    for path in nested_paths:
+        if '.' in path:
+            parent, child = path.split('.', 1)
+            if parent not in expected_keys:
+                continue
+                
+            # If we have a simple query key in input but need a nested structure
+            if 'query' in tool_args and parent not in tool_args and child == 'term':
+                # Create nested structure with the query value
+                return {parent: {child: tool_args['query']}}
+            
+            # Handle similar cases for other synonym mappings
+            for synonym, canonical in synonym_map.items():
+                if synonym in tool_args and canonical == child:
+                    # Create nested structure
+                    return {parent: {child: tool_args[synonym]}}
+    
     # Apply mapping
     new_args = {}
     for k, v in tool_args.items():
@@ -197,6 +233,7 @@ def normalize_tool_args(tool_args, tool):
         if isinstance(v, dict):
             v = normalize_tool_args(v, tool)
         new_args[mapped_key] = v
+    
     return new_args
 
 class ResearcherAgent:
@@ -250,6 +287,11 @@ class ResearcherAgent:
             logger.info(f"Initialized Next Step LLM: {NEXT_STEP_MODEL}")
             if not self.next_step_llm:
                 raise RuntimeError("Next Step LLM object is None after initialization.")
+            
+            # Ensure metadata includes safety settings for empty parts
+            if hasattr(self.next_step_llm, 'metadata') and isinstance(self.next_step_llm.metadata, dict):
+                self.next_step_llm.metadata["sanitize_history"] = True
+                logger.info("Added sanitize_history flag to NextStep LLM metadata")
         except Exception as e:
             # Fallback to primary LLM if next step LLM initialization fails
             logger.error(f"Failed to initialize Next Step LLM: {e}. Falling back to primary LLM.")
@@ -2404,6 +2446,48 @@ class ResearcherAgent:
             # If history is empty, just return a HumanMessage with the topic
             return [HumanMessage(content=f"Research the topic: {topic}")]
             
+        # Enhanced safety: pre-filter to remove ANY messages with empty content
+        filtered_history = []
+        for i, msg in enumerate(history):
+            # Skip any message with empty content - very aggressive filtering
+            if self._has_empty_content(msg):
+                logger.warning(f"Pre-filtering: Removing message at index {i} with empty content")
+                continue
+                
+            # For list content, filter out empty parts
+            if isinstance(msg.content, list):
+                valid_parts = []
+                for part in msg.content:
+                    # Skip None or empty strings or empty dicts
+                    if part is None or (isinstance(part, str) and not part.strip()) or (isinstance(part, dict) and not part):
+                        continue
+                    valid_parts.append(part)
+                    
+                # If we removed parts, create a new message
+                if len(valid_parts) != len(msg.content):
+                    logger.warning(f"Pre-filtering: Removed {len(msg.content) - len(valid_parts)} empty parts from message at index {i}")
+                    if valid_parts:  # Only add if we have valid parts
+                        # Create a new message of the same type with filtered content
+                        new_msg = type(msg)(
+                            content=valid_parts,
+                            tool_calls=getattr(msg, 'tool_calls', None)
+                        )
+                        filtered_history.append(new_msg)
+                else:
+                    # No empty parts, add original message
+                    filtered_history.append(msg)
+            else:
+                # Not a list, add original message
+                filtered_history.append(msg)
+            
+        # If we've filtered out all messages, return a fallback
+        if not filtered_history:
+            logger.warning("Pre-filtering removed all messages. Using fallback topic message.")
+            return [HumanMessage(content=f"Research the topic: {topic}")]
+            
+        # Replace history with pre-filtered version
+        history = filtered_history
+            
         # Ensure the first message is a HumanMessage
         if not isinstance(history[0], HumanMessage):
             logger.warning("First message in history is not a HumanMessage during sanitization. Adding initial topic.")
@@ -2500,22 +2584,33 @@ class ResearcherAgent:
                       # Avoid consecutive HumanMessages if something went wrong
                       logger.warning(f"Skipping HumanMessage at original index {i} as it cannot follow {type(sanitized_history[-1]).__name__} in sanitized sequence.")
 
-        logger.info(f"Sanitized history: Original length={len(history)}, New length={len(sanitized_history)}")
-        
         # Final check - ensure all messages have valid content before returning
         final_history = []
-        for msg in sanitized_history:
+        for i, msg in enumerate(sanitized_history):
+            # Double check message for empty content
             if not self._has_empty_content(msg):
                 final_history.append(msg)
             else:
-                logger.warning(f"Removing message with empty content in final sanitization check.")
+                logger.warning(f"Final validation: Removing message at index {i} with empty content.")
                 
         # Add a fallback if we somehow end up with an empty history
         if not final_history:
             logger.warning("Sanitization resulted in empty history. Adding fallback topic message.")
             final_history = [HumanMessage(content=f"Research the topic: {topic}")]
             
-        logger.info(f"Sanitized history: Original length={len(history)}, Final length={len(final_history)}")
+        # Final check: Log messages and content types for debugging
+        for i, msg in enumerate(final_history):
+            content_type = type(msg.content).__name__
+            if isinstance(msg.content, list):
+                parts_info = f"[{len(msg.content)} parts]"
+                content_info = f"{content_type}{parts_info}"
+            else:
+                content_len = len(str(msg.content)) if msg.content else 0
+                content_info = f"{content_type}({content_len} chars)"
+                
+            logger.debug(f"Final message {i}: {type(msg).__name__} with content {content_info}")
+                
+        logger.info(f"Sanitized history: Original={len(history)}, Filtered={len(filtered_history)}, Final={len(final_history)} messages")
         return final_history
 
     def _optimize_history_for_primary_model(self, history: List[BaseMessage], topic: str, max_turns: int = 3) -> List[BaseMessage]:
@@ -2712,7 +2807,7 @@ class ResearcherAgent:
             
             # Process the structured output to extract and format summary + references
             logger.info("Processing structured summary output")
-            processed_summary = self._post_process_summary(raw_summary, accumulated_content)
+            processed_summary = await self._post_process_summary(raw_summary, accumulated_content)
             
             logger.info("Successfully generated final summary content (excluding token stats)")
             return processed_summary # Return only summary + references
@@ -2908,79 +3003,129 @@ class ResearcherAgent:
         
         return tool_name, params
 
-    def _post_process_summary(self, summary: str, accumulated_content: str) -> str:
-        """
-        Process the structured output format with section delimiters.
-        Extract and format the summary and sources sections.
-        
-        Args:
-            summary: The raw summary text from the LLM with section delimiters
-            accumulated_content: The accumulated research content
-            
-        Returns:
-            Properly formatted final summary content (excluding token stats)
-        """
+    async def _post_process_summary(self, summary: str, accumulated_content: str) -> str:
+        """Post-process the summary to extract sections, fetch titles for URLs, and format."""
+        logger.debug(f"Raw summary input for post-processing:\n{summary}")
         # Define section patterns
-        summary_pattern = r"---SUMMARY_START---\s*([\s\S]*?)\s*---SUMMARY_END---"
-        sources_pattern = r"---SOURCES_START---\s*([\s\S]*?)\s*---SOURCES_END---"
+        summary_pattern = r"---SUMMARY_START---\s*([\\s\\S]*?)\s*---SUMMARY_END---"
+        sources_pattern = r"---SOURCES_START---\s*([\\s\\S]*?)\s*---SOURCES_END---"
         
         try:
-            # Extract the sections using simple regex for the delimiters
-            import re
-            
             # Extract the main summary content
             summary_match = re.search(summary_pattern, summary, re.DOTALL)
             summary_content = summary_match.group(1).strip() if summary_match else ""
             
+            # Extract the sources section
+            sources_match = re.search(sources_pattern, summary, re.DOTALL)
+            raw_sources_content = sources_match.group(1).strip() if sources_match else ""
+
             # Fallback logic if structured format wasn't used
             if not summary_match:
                 logger.warning("Structured summary format not detected, using fallback extraction")
                 summary_content = summary
-                sources_content = "" # Initialize sources_content for fallback
+                raw_sources_content = "" # Initialize sources_content for fallback
                 
                 # Try to extract and clean up any references section in traditional format
-                ref_section_match = re.search(r'(### References|### SOURCE LINKS)\s*\n', summary, re.IGNORECASE | re.DOTALL)
+                ref_section_match = re.search(r'(### References|### SOURCE LINKS)\\s*\\n', summary, re.IGNORECASE | re.DOTALL)
                 if ref_section_match:
-                    parts = re.split(r'(### References|### SOURCE LINKS)\s*\n', summary, flags=re.IGNORECASE | re.DOTALL, maxsplit=1)
+                    parts = re.split(r'(### References|### SOURCE LINKS)\\s*\\n', summary, flags=re.IGNORECASE | re.DOTALL, maxsplit=1)
                     if len(parts) >= 2:
                         summary_content = parts[0].strip()
-                        sources_content = parts[-1].strip()
+                        raw_sources_content = parts[-1].strip()
                         
                         # Check for empty/irrelevant sources section
-                        if ('(No URLs were present' in sources_content or 
-                            not sources_content or 
-                            sources_content.isspace() or
-                            "no sources cited" in sources_content.lower()):
+                        if ('(No URLs were present' in raw_sources_content or 
+                            not raw_sources_content or 
+                            raw_sources_content.isspace() or
+                            "no sources cited" in raw_sources_content.lower()):
                             logger.info("Empty/irrelevant references section detected in traditional format, removing")
-                            sources_content = ""
+                            raw_sources_content = ""
                         else:
-                            citation_refs = set(re.findall(r'\[(\d+)\]', summary_content))
+                            citation_refs = set(re.findall(r'\\[(\\d+)\\]', summary_content))
                             if not citation_refs:
                                 logger.info("No citations found in summary, removing references section")
-                                sources_content = ""
+                                raw_sources_content = ""
                 
-                # Return processed fallback content
-                return summary_content + (f"\n\n### References\n{sources_content}" if sources_content else "")
+                # If fallback didn't find sources, just return summary
+                if not raw_sources_content:
+                    return summary_content
+
+            # --- Clean and Process Sources ---
             
-            # --- Structured Format Processing --- 
-            
-            # Extract the sources section
-            sources_match = re.search(sources_pattern, summary, re.DOTALL)
-            sources_content = sources_match.group(1).strip() if sources_match else ""
-            
-            # Clean up sources content - remove template instructions or empty placeholders
-            if ('[only include' in sources_content.lower() or 
-                '[if no sources' in sources_content.lower() or 
-                'leave this section empty' in sources_content.lower() or
-                sources_content.strip() == "" or
-                sources_content.strip().isspace()):
+            # Clean up raw sources content - remove template instructions or empty placeholders
+            if (raw_sources_content and 
+               ('[only include' in raw_sources_content.lower() or 
+                '[if no sources' in raw_sources_content.lower() or 
+                'leave this section empty' in raw_sources_content.lower() or
+                raw_sources_content.strip() == "" or
+                raw_sources_content.strip().isspace())):
                 logger.info("Removing source instruction text or empty content from output")
-                sources_content = ""
-            
+                raw_sources_content = ""
+
+            formatted_sources_lines = []
+            if raw_sources_content:
+                # Regex to find URLs, potentially within markdown links like [n](url) or just bare URLs
+                # It also captures the potential citation number/prefix (like '[1]', '1.', '-')
+                url_pattern = re.compile(r'^\s*([\[\d\]\.\-\*]+)?\s*(?:\[.*?\]\((?P<md_url>https?://[^\s\)]+)\)|(?P<bare_url>https?://[^\s]+))', re.MULTILINE)
+                
+                urls_to_fetch = []
+                source_lines = raw_sources_content.split('\n')
+                original_line_map = {} # Map URL to its original line structure
+
+                for line in source_lines:
+                    match = url_pattern.search(line)
+                    if match:
+                        url = match.group('md_url') or match.group('bare_url')
+                        if url:
+                            prefix = match.group(1) if match.group(1) else '*' # Default prefix
+                            cleaned_url = self._clean_url(url) # Clean URL before fetching/storing
+                            urls_to_fetch.append(cleaned_url)
+                            original_line_map[cleaned_url] = {'prefix': prefix.strip(), 'original_url': url}
+                    elif line.strip(): # Keep non-url lines as is if they exist
+                         formatted_sources_lines.append(line)
+
+
+                if urls_to_fetch:
+                    async with aiohttp.ClientSession() as session:
+                        tasks = [self._fetch_url_title(session, u) for u in urls_to_fetch]
+                        titles = await asyncio.gather(*tasks, return_exceptions=True)
+
+                    processed_urls = set()
+                    title_map = {}
+                    for url, title_result in zip(urls_to_fetch, titles):
+                         if url not in processed_urls:
+                            if isinstance(title_result, str):
+                                title_map[url] = title_result
+                            else:
+                                title_map[url] = None # Mark as failed/no title
+                                if not isinstance(title_result, asyncio.TimeoutError): # Log errors other than timeout
+                                     logger.debug(f"Title fetch failed for {url}: {title_result}")
+                            processed_urls.add(url)
+
+                    # Reconstruct lines based on fetched titles
+                    temp_formatted_lines = []
+                    added_urls = set()
+                    for url in urls_to_fetch:
+                        if url in original_line_map and url not in added_urls:
+                             line_info = original_line_map[url]
+                             title = title_map.get(url)
+                             prefix = line_info['prefix']
+                             original_url = line_info['original_url'] # Use the original URL for display
+
+                             if title:
+                                 temp_formatted_lines.append(f"{prefix} {title} - {original_url}")
+                             else:
+                                 temp_formatted_lines.append(f"{prefix} {original_url}")
+                             added_urls.add(url)
+                    # Append any non-URL lines first, then the formatted URL lines
+                    formatted_sources_lines.extend(temp_formatted_lines)
+
+
             # Prepare the final formatted output (summary + optional references)
             result = summary_content
-            if sources_content:
-                result += "\n\n### References\n" + sources_content
+            if formatted_sources_lines:
+                formatted_sources_content = "\n".join(formatted_sources_lines)
+                result += f"\n\n### References\n{formatted_sources_content}"
             
             return result
             
@@ -2988,7 +3133,21 @@ class ResearcherAgent:
             logger.error(f"Error processing summary: {e}", exc_info=True)
             # Fallback to the original summary if processing fails
             logger.warning("Using original summary due to processing error")
-            return summary
+            # Attempt to return the original summary *before* potential source modification
+            original_summary_match = re.search(summary_pattern, summary, re.DOTALL)
+            original_sources_match = re.search(sources_pattern, summary, re.DOTALL)
+            
+            fallback_summary = original_summary_match.group(1).strip() if original_summary_match else summary
+            fallback_sources = original_sources_match.group(1).strip() if original_sources_match else ""
+            
+            if fallback_sources:
+                 # Basic check if fallback sources look like URLs before appending
+                 if 'http' in fallback_sources:
+                     return fallback_summary + "\n\n### References\n" + fallback_sources
+                 else: 
+                     return fallback_summary # Don't append if sources look invalid
+            else:
+                 return fallback_summary
 
     def _clean_url(self, url):
         """Remove tracking parameters and fragments from a URL, except for Reddit URLs."""
@@ -3258,6 +3417,14 @@ class ResearcherAgent:
         """
         logger.info(f"Attempting to get correction suggestion for tool {tool_name}")
         
+        # First, check if we can determine a correction directly from the error message
+        # This helps for common nested field errors without requiring LLM calls
+        corrected_args = self._try_direct_correction(tool_name, failed_args, error_message)
+        if corrected_args:
+            logger.info(f"Direct correction applied for {tool_name}: {corrected_args}")
+            return corrected_args
+            
+        # If direct correction failed, proceed with LLM-based correction
         # First, find the tool object to get its description
         tool_to_use = None
         for tool in self.tools:
@@ -3322,6 +3489,61 @@ class ResearcherAgent:
         except Exception as correction_err:
             logger.error(f"Error during correction generation for {tool_name}: {correction_err}", exc_info=True)
             return None
+
+    def _try_direct_correction(self, tool_name: str, failed_args: Dict[str, Any], error_message: str) -> Optional[Dict[str, Any]]:
+        """Attempt to directly correct arguments based on error patterns without requiring LLM.
+        
+        This handles common patterns like missing nested fields (e.g., request.term).
+        
+        Args:
+            tool_name: Name of the tool that failed
+            failed_args: The arguments that caused the failure
+            error_message: The error message from the failed call
+            
+        Returns:
+            Corrected arguments or None if direct correction is not possible
+        """
+        # Check for nested path errors (e.g., "request.term")
+        nested_field_match = re.search(r"(\w+)\.(\w+).*Field required", error_message)
+        
+        if nested_field_match:
+            parent_field, child_field = nested_field_match.groups()
+            
+            # Handle the case where a simple query/term parameter needs to be nested
+            if 'query' in failed_args and child_field == 'term':
+                return {parent_field: {'term': failed_args['query']}}
+                
+            # Handle other common synonym mappings for nested structures
+            synonyms = {
+                'query': 'term',
+                'q': 'term',
+                'search': 'term',
+                'text': 'content',
+                'input': 'content',
+                'keywords': 'term',
+            }
+            
+            for synonym, canonical in synonyms.items():
+                if synonym in failed_args and canonical == child_field:
+                    return {parent_field: {child_field: failed_args[synonym]}}
+        
+        # Check for completely missing parent object
+        parent_missing_match = re.search(r"(\w+)\s+Field required", error_message)
+        
+        if parent_missing_match and not nested_field_match:
+            parent_field = parent_missing_match.group(1)
+            
+            # If we have query but need parent.term structure
+            if 'query' in failed_args:
+                # For search_abstracts and similar tools expecting request.term structure
+                if tool_name == 'search_abstracts' or 'abstract' in tool_name:
+                    return {parent_field: {'term': failed_args['query']}}
+                    
+                # Generic handling - assume the parent is a container for the query
+                return {parent_field: failed_args}
+                
+        # Fall back to standard LLM-based correction if we can't detect a pattern
+        return None
 
     def normalize_tool_args(self, tool_args: Dict[str, Any], tool: Any) -> Dict[str, Any]:
         """Normalize tool arguments to match the tool's expected schema.
@@ -3452,3 +3674,35 @@ class ResearcherAgent:
         
         # For other content types, just return the original message
         return message
+
+    async def _fetch_url_title(self, session: aiohttp.ClientSession, url: str) -> Optional[str]:
+        """Asynchronously fetch the title of a URL."""
+        if not url or not url.startswith(('http://', 'https://')):
+            return None
+        try:
+            # Add a common user-agent to avoid blocking
+            headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'}
+            async with session.get(url, timeout=5, headers=headers, ssl=False) as response: # Added ssl=False for potential SSL issues
+                response.raise_for_status()  # Raise an exception for bad status codes
+                # Limit reading size to avoid memory issues with large pages
+                html_content = await response.text(encoding='utf-8', errors='ignore')
+                
+                # Extract title using regex (simple approach)
+                title_match = re.search(r'<title>(.*?)</title>', html_content, re.IGNORECASE | re.DOTALL)
+                if title_match:
+                    title = title_match.group(1).strip()
+                    # Clean up title (optional: decode HTML entities, remove extra whitespace)
+                    import html
+                    title = html.unescape(title)
+                    title = re.sub(r'\s+', ' ', title).strip()
+                    return title if title else None 
+                return None
+        except asyncio.TimeoutError:
+            logger.warning(f"Timeout fetching title for URL: {url}")
+            return None
+        except aiohttp.ClientError as e:
+            logger.warning(f"HTTP ClientError fetching title for URL {url}: {e}")
+            return None
+        except Exception as e:
+            logger.warning(f"Error fetching title for URL {url}: {e}")
+            return None

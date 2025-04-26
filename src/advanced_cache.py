@@ -138,6 +138,22 @@ class NormalizingCache(SQLiteCache):
         Returns:
             A list of generations if found, None otherwise
         """
+        # Extract metadata from llm_string if it's JSON-encoded
+        metadata = {}
+        try:
+            if llm_string.startswith('{') and llm_string.endswith('}'):
+                llm_data = json.loads(llm_string)
+                if isinstance(llm_data, dict) and "metadata" in llm_data:
+                    metadata = llm_data["metadata"]
+        except (json.JSONDecodeError, TypeError, AttributeError):
+            pass
+            
+        # Check for cache bypass flag
+        if metadata.get("no_cache") is True:
+            logger.info(f"[CACHE] BYPASS requested via metadata.no_cache flag")
+            self.stats.misses += 1
+            return None
+            
         log_id = self._prompt_hash_and_preview(prompt)
         logger.info(f"[CACHE] Lookup: model={llm_string}, {log_id}")
         original_result = self._original_lookup(prompt, llm_string)

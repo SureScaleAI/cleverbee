@@ -169,19 +169,39 @@ class RetryingLLM(BaseChatModel):
             try:
                 if attempt > 0:
                     logger.warning(f"Retry attempt {attempt}/{self.max_retries} for {self.model_name}...")
+                    # Create a copy of kwargs and add cache bypass for retries
+                    retry_kwargs = kwargs.copy()
+                    # Add no_cache=True to the metadata to bypass caching on retries
+                    retry_kwargs["metadata"] = retry_kwargs.get("metadata", {})
+                    if isinstance(retry_kwargs["metadata"], dict):
+                        retry_kwargs["metadata"]["no_cache"] = True
                     
-                # Call the wrapped LLM
-                if hasattr(self.llm, '_agenerate'):
-                    return await self.llm._agenerate(
-                        messages=messages, 
-                        stop=stop,
-                        run_manager=run_manager,
-                        **kwargs
-                    )
+                    # Call the wrapped LLM with cache bypass
+                    if hasattr(self.llm, '_agenerate'):
+                        return await self.llm._agenerate(
+                            messages=messages, 
+                            stop=stop,
+                            run_manager=run_manager,
+                            **retry_kwargs
+                        )
+                    else:
+                        # Fallback for LLMs that don't implement _agenerate
+                        logger.warning(f"LLM {self.model_name} doesn't implement _agenerate, using generate instead")
+                        return await self.llm.agenerate([messages], stop=stop, run_manager=run_manager, **retry_kwargs)
                 else:
-                    # Fallback for LLMs that don't implement _agenerate
-                    logger.warning(f"LLM {self.model_name} doesn't implement _agenerate, using generate instead")
-                    return await self.llm.agenerate([messages], stop=stop, run_manager=run_manager, **kwargs)
+                    # First attempt - use original kwargs
+                    # Call the wrapped LLM
+                    if hasattr(self.llm, '_agenerate'):
+                        return await self.llm._agenerate(
+                            messages=messages, 
+                            stop=stop,
+                            run_manager=run_manager,
+                            **kwargs
+                        )
+                    else:
+                        # Fallback for LLMs that don't implement _agenerate
+                        logger.warning(f"LLM {self.model_name} doesn't implement _agenerate, using generate instead")
+                        return await self.llm.agenerate([messages], stop=stop, run_manager=run_manager, **kwargs)
                 
             except Exception as e:
                 last_error = e
@@ -193,6 +213,7 @@ class RetryingLLM(BaseChatModel):
                         f"LLM call to {self.model_name} failed with error: {e}. "
                         f"Retrying in {delay:.2f}s (attempt {attempt+1}/{self.max_retries})"
                     )
+                    # Use asyncio.sleep instead of time.sleep for async method
                     await asyncio.sleep(delay)
                     attempt += 1
                 else:
@@ -221,18 +242,39 @@ class RetryingLLM(BaseChatModel):
                 if attempt > 0:
                     logger.warning(f"Retry attempt {attempt}/{self.max_retries} for {self.model_name}...")
                     
-                # Call the wrapped LLM
-                if hasattr(self.llm, '_generate'):
-                    return self.llm._generate(
-                        messages=messages, 
-                        stop=stop,
-                        run_manager=run_manager,
-                        **kwargs
-                    )
+                    # Create a copy of kwargs and add cache bypass for retries
+                    retry_kwargs = kwargs.copy()
+                    # Add no_cache=True to the metadata to bypass caching on retries
+                    retry_kwargs["metadata"] = retry_kwargs.get("metadata", {})
+                    if isinstance(retry_kwargs["metadata"], dict):
+                        retry_kwargs["metadata"]["no_cache"] = True
+                    
+                    # Call the wrapped LLM with cache bypass
+                    if hasattr(self.llm, '_generate'):
+                        return self.llm._generate(
+                            messages=messages, 
+                            stop=stop,
+                            run_manager=run_manager,
+                            **retry_kwargs
+                        )
+                    else:
+                        # Fallback for LLMs that don't implement _generate
+                        logger.warning(f"LLM {self.model_name} doesn't implement _generate, using generate instead")
+                        return self.llm.generate([messages], stop=stop, run_manager=run_manager, **retry_kwargs)
                 else:
-                    # Fallback for LLMs that don't implement _generate
-                    logger.warning(f"LLM {self.model_name} doesn't implement _generate, using generate instead")
-                    return self.llm.generate([messages], stop=stop, run_manager=run_manager, **kwargs)
+                    # First attempt - use original kwargs
+                    # Call the wrapped LLM
+                    if hasattr(self.llm, '_generate'):
+                        return self.llm._generate(
+                            messages=messages, 
+                            stop=stop,
+                            run_manager=run_manager,
+                            **kwargs
+                        )
+                    else:
+                        # Fallback for LLMs that don't implement _generate
+                        logger.warning(f"LLM {self.model_name} doesn't implement _generate, using generate instead")
+                        return self.llm.generate([messages], stop=stop, run_manager=run_manager, **kwargs)
                 
             except Exception as e:
                 last_error = e
@@ -440,7 +482,10 @@ def get_llm_client(
                 temperature=0.2,  # Setting a low temperature for more consistent output
                 verbose=True,  # Enable verbose mode for better tracking
                 metadata={"usage_metadata": True},  # Enable proper token usage tracking
-                tags=tags # <<< USE UPDATED TAGS >>>
+                tags=tags, # <<< USE UPDATED TAGS >>>
+                request_timeout=60.0,  # Increased timeout for reliability
+                max_retries=6,  # Increase built-in retries
+                streaming=False  # Disable streaming to avoid partial failures
             )
             logger.info(f"Successfully created ChatGoogleGenerativeAI client for model: {final_model_name} with tags: {llm_client.tags}")
         except Exception as e:

@@ -21,7 +21,7 @@ DEFAULT_CONFIG = {
     "LOCAL_MODEL_QUANT_LEVEL": "Q4_K_M",  # Default quantization level
     "SUMMARIZER_MODEL": "gemini-2.0-flash",  # Default summarization model setting
     "SUMMARY_MAX_TOKENS": int(os.environ.get('SUMMARY_MAX_TOKENS', 1200)),
-    "FINAL_SUMMARY_MAX_TOKENS": int(os.environ.get('FINAL_SUMMARY_MAX_TOKENS', 4096)), # Max tokens for the final report
+    "FINAL_SUMMARY_MAX_TOKENS": int(os.environ.get('FINAL_SUMMARY_MAX_TOKENS', 16000)), # Max tokens for the final report
     # --- Next Step Model Configuration --- #
     "NEXT_STEP_MODEL": "gemini-2.5-flash-preview-04-17",  # Default next step model
     "NEXT_STEP_THINKING_DEFAULT": False,      # Default: do not use thinking mode unless planner requests

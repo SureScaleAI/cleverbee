@@ -327,7 +327,7 @@ Please choose how you'd like me to respond:
 Both options include the original research topic and research plan for context.
             """,
             actions=actions,
-            author="System"
+            author="Researcher"
         ).send()
         
         # Store the follow-up query to be used when an action is selected
@@ -482,6 +482,48 @@ async def on_use_summary(action: cl.Action):
             metadata=metadata
         )
         
+        # >>> ADDED: Log LLM parameters before response processing <<<
+        try:
+            # Attempt to extract model parameters from the LLM client
+            logger.info("LLM Configuration Parameters:")
+            
+            # Extract from the llm_client object itself
+            if hasattr(llm_client, 'model_kwargs'):
+                logger.info(f"Model kwargs: {llm_client.model_kwargs}")
+            
+            if hasattr(llm_client, 'model_name'):
+                logger.info(f"Model name: {llm_client.model_name}")
+                
+            # Check for different parameter attributes that might exist
+            for param_name in ['temperature', 'max_tokens', 'max_output_tokens', 'max_token_limit', 
+                              'top_p', 'top_k', 'model', 'streaming']:
+                if hasattr(llm_client, param_name):
+                    logger.info(f"LLM parameter: {param_name}={getattr(llm_client, param_name)}")
+            
+            # Check for _default_params if it exists
+            if hasattr(llm_client, '_default_params'):
+                logger.info(f"Default params: {llm_client._default_params}")
+                
+            # Check invocation params from the most recent response if available
+            if hasattr(response, 'llm_output') and response.llm_output and 'token_usage' in response.llm_output:
+                logger.info(f"Token usage from response: {response.llm_output['token_usage']}")
+                
+            # If this is a Gemini model, check for specific attributes
+            if 'gemini' in str(llm_client.__class__).lower() or (hasattr(llm_client, 'model_name') and 'gemini' in llm_client.model_name.lower()):
+                logger.info("Detected Gemini model - checking for specific parameters")
+                # Additional Gemini-specific parameters
+                for param_name in ['google_api_key', 'generation_config', 'safety_settings']:
+                    if hasattr(llm_client, param_name):
+                        param_value = getattr(llm_client, param_name)
+                        # Don't log actual API keys
+                        if param_name == 'google_api_key':
+                            logger.info(f"LLM has google_api_key configured: {param_value is not None}")
+                        else:
+                            logger.info(f"Gemini parameter: {param_name}={param_value}")
+        except Exception as e:
+            logger.warning(f"Failed to extract LLM parameters: {e}")
+        # >>> END ADDED LLM PARAMETER LOGGING <<<
+        
         response_text = response.generations[0][0].text if response and response.generations else "No response generated."
         
         # Check for tool calls in the response
@@ -608,6 +650,18 @@ async def on_use_summary(action: cl.Action):
         await thinking_msg.remove()
         
         # Send response
+        # >>> ADDED: Log the first and last parts of the response to avoid log truncation <<<
+        logger.info(f"Attempting to send full content response (length: {len(response_text)} chars).")
+        preview_length = 500  # Characters to show at start and end
+        if len(response_text) > preview_length * 2:
+            logger.info(f"Response content preview (first/last {preview_length} chars):")
+            logger.info(f"START: {response_text[:preview_length]}...")
+            logger.info(f"...END: {response_text[-preview_length:]}")
+        else:
+            logger.info(f"Full response content:\n{response_text}")
+        # >>> END LOGGING CHANGES <<<
+        
+        # Send the response as a single message
         await cl.Message(content=response_text, author="Researcher").send()
         
         # Show tool usage summary if any tools were used
@@ -701,6 +755,48 @@ async def on_use_full_content(action: cl.Action):
             metadata=metadata
         )
         
+        # >>> ADDED: Log LLM parameters before response processing <<<
+        try:
+            # Attempt to extract model parameters from the LLM client
+            logger.info("LLM Configuration Parameters:")
+            
+            # Extract from the llm_client object itself
+            if hasattr(llm_client, 'model_kwargs'):
+                logger.info(f"Model kwargs: {llm_client.model_kwargs}")
+            
+            if hasattr(llm_client, 'model_name'):
+                logger.info(f"Model name: {llm_client.model_name}")
+                
+            # Check for different parameter attributes that might exist
+            for param_name in ['temperature', 'max_tokens', 'max_output_tokens', 'max_token_limit', 
+                              'top_p', 'top_k', 'model', 'streaming']:
+                if hasattr(llm_client, param_name):
+                    logger.info(f"LLM parameter: {param_name}={getattr(llm_client, param_name)}")
+            
+            # Check for _default_params if it exists
+            if hasattr(llm_client, '_default_params'):
+                logger.info(f"Default params: {llm_client._default_params}")
+                
+            # Check invocation params from the most recent response if available
+            if hasattr(response, 'llm_output') and response.llm_output and 'token_usage' in response.llm_output:
+                logger.info(f"Token usage from response: {response.llm_output['token_usage']}")
+                
+            # If this is a Gemini model, check for specific attributes
+            if 'gemini' in str(llm_client.__class__).lower() or (hasattr(llm_client, 'model_name') and 'gemini' in llm_client.model_name.lower()):
+                logger.info("Detected Gemini model - checking for specific parameters")
+                # Additional Gemini-specific parameters
+                for param_name in ['google_api_key', 'generation_config', 'safety_settings']:
+                    if hasattr(llm_client, param_name):
+                        param_value = getattr(llm_client, param_name)
+                        # Don't log actual API keys
+                        if param_name == 'google_api_key':
+                            logger.info(f"LLM has google_api_key configured: {param_value is not None}")
+                        else:
+                            logger.info(f"Gemini parameter: {param_name}={param_value}")
+        except Exception as e:
+            logger.warning(f"Failed to extract LLM parameters: {e}")
+        # >>> END ADDED LLM PARAMETER LOGGING <<<
+        
         response_text = response.generations[0][0].text if response and response.generations else "No response generated."
         
         # Check for tool calls in the response
@@ -827,6 +923,18 @@ async def on_use_full_content(action: cl.Action):
         await thinking_msg.remove()
         
         # Send response
+        # >>> ADDED: Log the first and last parts of the response to avoid log truncation <<<
+        logger.info(f"Attempting to send full content response (length: {len(response_text)} chars).")
+        preview_length = 500  # Characters to show at start and end
+        if len(response_text) > preview_length * 2:
+            logger.info(f"Response content preview (first/last {preview_length} chars):")
+            logger.info(f"START: {response_text[:preview_length]}...")
+            logger.info(f"...END: {response_text[-preview_length:]}")
+        else:
+            logger.info(f"Full response content:\n{response_text}")
+        # >>> END LOGGING CHANGES <<<
+        
+        # Send the response as a single message
         await cl.Message(content=response_text, author="Researcher").send()
         
         # Show tool usage summary if any tools were used

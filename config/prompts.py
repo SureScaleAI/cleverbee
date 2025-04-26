@@ -312,7 +312,7 @@ Follow these instructions carefully:
     - When citing information from a source, assign it a citation number [1], [2], etc. and include that number in your SOURCES section at the end.
     - In the SOURCES section, list ONLY the sources (URLs or refrence to data used via tool) that you have actually cited in the summary with a [n] number. Do NOT list any sources that are not referenced in the summary.
     - For each source, provide the full direct link (not just a domain or title), using the format: `1. [URL]`
-    - If a cited fact is based on a tool result that does not have a URL, reference in a human-readable format in the SOURCES section so it makes sense to the reader.`.
+    - If a cited fact is based on a tool result that does not have a URL, reference in a human-readable format in the SOURCES section so it makes sense to the reader. You don't have to mention the tool.`.
     - Ensure that every citation number [n] in the summary has a matching entry in the SOURCES section, and vice versa.
     - If no sources are cited in the summary, briefly explain why in the SOURCES section.
 

@@ -108,15 +108,55 @@ class RedditSearchTool(PlaywrightBrowserTool):
         
         # --- Clean the query ---
         original_query = query
-        # Remove all forms of 'site:reddit.com' or 'site: reddit.com' (case-insensitive, with or without spaces)
-        cleaned_query = re.sub(r'\(?\s*site\s*:\s*reddit\.com\s*\)?', '', query, flags=re.IGNORECASE)
-        # Remove any dangling boolean operators (OR, AND, NOT) at the start/end or double spaces
+        cleaned_query = query
+        
+        # Define problematic terms to remove/filter
+        # These terms can lead to poor search results when included in Reddit search
+        problematic_terms = ['reddit', 'discussion']
+        
+        # 1. Process quoted phrases to extract meaningful keywords
+        # Examples:
+        # - "mcp development discussion" -> "Kambo safety"
+        # - "reddit data surfer" -> "plant medicine"
+        def replace_quoted_phrase(match):
+            phrase = match.group(1)
+            # If the phrase contains problematic terms, extract meaningful words
+            if any(re.search(rf'\b{term}\b', phrase, re.IGNORECASE) for term in problematic_terms):
+                # Split the phrase into words
+                words = re.findall(r'\b\w+\b', phrase)
+                # Filter out problematic words
+                filtered_words = [word for word in words if not any(
+                    re.match(rf'\b{term}\b', word, re.IGNORECASE) for term in problematic_terms)]
+                # If we have meaningful words left, join them and return
+                if filtered_words:
+                    return ' '.join(filtered_words)
+                return ''
+            # Not a problematic phrase, return as is
+            return f'"{phrase}"'
+        
+        # Process quoted phrases first
+        cleaned_query = re.sub(r'"([^"]+)"', replace_quoted_phrase, cleaned_query)
+        
+        # 2. Remove special site search patterns
+        # Example: "site:reddit.com Kambo" -> "Kambo"
+        cleaned_query = re.sub(r'\(?\s*site\s*:\s*reddit\.com\s*\)?', '', cleaned_query, flags=re.IGNORECASE)
+        
+        # 3. Remove standalone problematic terms
+        # Examples:
+        # - "best reddit posts" -> "best posts"
+        # - "Kambo safety discussion" -> "Kambo safety"
+        for term in problematic_terms:
+            cleaned_query = re.sub(rf'\b{term}\b', '', cleaned_query, flags=re.IGNORECASE)
+        
+        # 4. Clean up remaining artifacts
+        # Remove any dangling boolean operators (OR, AND, NOT) at the start/end 
         cleaned_query = re.sub(r'\b(OR|AND|NOT)\b\s*$', '', cleaned_query, flags=re.IGNORECASE)
         cleaned_query = re.sub(r'^\s*\b(OR|AND|NOT)\b', '', cleaned_query, flags=re.IGNORECASE)
         # Remove repeated spaces and stray parentheses
         cleaned_query = re.sub(r'\s+', ' ', cleaned_query)
         cleaned_query = re.sub(r'\(\s*\)', '', cleaned_query)
         cleaned_query = cleaned_query.strip()
+        
         if cleaned_query != original_query:
             logger.info(f"[RedditSearch] Cleaned query from '{original_query}' to '{cleaned_query}'")
             query = cleaned_query # Use the cleaned query

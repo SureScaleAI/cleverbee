@@ -1,0 +1,20 @@
+---
+description: 
+globs: 
+alwaysApply: false
+---
+# Agent and Tool System
+
+The core research logic is implemented in [researcher_agent.py](mdc:src/agent/researcher_agent.py) as the `ResearcherAgent` class. This agent coordinates LLMs, tool usage, and content management to perform research tasks.
+
+## Tool System
+- Internal tools (e.g., web browser, Reddit search) are defined as LangChain-compatible classes in [src/tools/](mdc:src/tools).
+- External MCP tools are loaded dynamically from `mcp.json` and integrated at runtime.
+- The tool registry ([tool_registry.py](mdc:src/tools/tool_registry.py)) loads and instantiates tools based on configuration and available classes.
+- Tools can be enabled/disabled in [config.yaml](mdc:config.yaml) under the `tools` section.
+- Tool schemas are validated at runtime using Pydantic.
+
+## Extending Tools
+- To add a new tool, implement a class in [src/tools/](mdc:src/tools) and register it in the tool registry and configuration.
+- Tool schemas use Pydantic for input validation.
+- See [tool_registry.py](mdc:src/tools/tool_registry.py) for dynamic loading logic and [researcher_agent.py](mdc:src/agent/researcher_agent.py) for how tools are invoked during research.

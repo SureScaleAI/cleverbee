@@ -1,0 +1,18 @@
+---
+description: 
+globs: 
+alwaysApply: false
+---
+# Configuration Guide
+
+All major configuration for CleverBee is managed in [config.yaml](mdc:config.yaml). This file controls:
+
+- **Model selection** (primary, summarizer, next-step LLMs)
+- **Summarization settings** (models, token limits, chunking)
+- **Content processing and memory** (chunk size, overlap, progressive loading)
+- **Web search and browser settings** (limits, timeouts, CAPTCHA solver)
+- **Tool enable/disable** (web browser, Reddit tools, etc.)
+- **Token usage tracking and pricing**
+- **Logging level**
+
+Configuration is read at runtime and some settings (e.g., local model usage, chunk size) may be auto-detected or overridden by `setup.sh` based on your environment. See comments in [config.yaml](mdc:config.yaml) for detailed options and recommendations.

@@ -1,0 +1,21 @@
+---
+description: 
+globs: 
+alwaysApply: false
+---
+# LLM Client System and Caching
+
+CleverBee uses a modular LLM client system managed by [factory.py](mdc:src/llm_clients/factory.py). Models are selected and configured via [config.yaml](mdc:config.yaml):
+
+- **Primary, summarizer, and next-step LLMs** are set in config.yaml.
+- Supported providers: Gemini, Claude, and local GGUF models (llama.cpp).
+- The factory handles retry logic and dynamic instantiation based on provider and model name. Retry logic is built-in for transient errors.
+
+## Adding or Changing LLMs
+- Update the relevant model fields in [config.yaml](mdc:config.yaml).
+- To add a new provider, extend the logic in [factory.py](mdc:src/llm_clients/factory.py).
+
+## Caching
+- LLM responses are cached using a NormalizingCache (SQLite-based) for performance and cost reduction.
+- Caching can be toggled between advanced (normalized, persistent) and in-memory modes. Cache mode is set in [main.py](mdc:src/main.py) and [config.yaml](mdc:config.yaml).
+- Token usage and cost tracking are integrated and can be enabled/disabled in config.yaml.

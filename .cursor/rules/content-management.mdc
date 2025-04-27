@@ -1,0 +1,16 @@
+---
+description: 
+globs: 
+alwaysApply: false
+---
+# Content Management and Summarization
+
+Content processing is managed by the [ContentManager](mdc:src/content_manager.py) class. This system:
+
+- Stores and tracks all extracted content as LangChain Documents, with source attribution and metadata for each item
+- Chunks content using RecursiveCharacterTextSplitter (configurable chunk size/overlap in [config.yaml](mdc:config.yaml))
+- Generates hierarchical summaries: first for each chunk, then combines them for a full summary using LLMs
+- Supports progressive loading: initially provides summaries, loads full content only when needed
+- Handles both web and document (e.g., PDF) content
+
+See [content_manager.py](mdc:src/content_manager.py) for implementation details and [config.yaml](mdc:config.yaml) for relevant settings.

@@ -1,0 +1,33 @@
+---
+description: 
+globs: 
+alwaysApply: false
+---
+# CleverBee Project Overview
+
+CleverBee is an advanced, modular Python-based AI research assistant. It leverages Large Language Models (LLMs) such as Claude and Gemini, Playwright for automated web browsing, and Chainlit for an interactive UI. The research workflow is:
+
+1. Web search and browsing
+2. Content extraction and cleaning
+3. Hierarchical summarization (chunk, then combined)
+4. Final report generation
+
+LLMs are swappable and configurable for each stage (planning, next-step, summarization). All major settings are in [config.yaml](mdc:config.yaml).
+
+## Key Features
+- **Interactive web UI** via Chainlit
+- **MCP Tool Support:** Integrates external tools via the Model Context Protocol (MCP)
+- **Multi-LLM Research:** Distinct, configurable LLMs for each research stage
+- **Automated Web Browsing:** Playwright for web search and content extraction
+- **Content Processing:** HTML to Markdown cleaning before summarization
+- **Integrated Token Tracking:** Monitors token usage and estimates LLM costs
+- **Highly Configurable:** All major settings in [config.yaml](mdc:config.yaml)
+- **Modular LLM Clients:** Supports Gemini, Claude, and local GGUF models
+- **LLM Caching:** Uses a NormalizingCache (SQLite-based) for performance and cost reduction
+
+## System Compatibility
+- **macOS:** Fully supported (Intel & Apple Silicon via Rosetta 2)
+- **Linux:** Fully supported (NVIDIA GPU detection and optimization)
+- **Windows:** Limited support via WSL
+
+See [README.md](mdc:README.md) for more details and quick start instructions.

@@ -1,0 +1,18 @@
+---
+description: 
+globs: 
+alwaysApply: false
+---
+# Playwright Browser Tool
+
+The [PlaywrightBrowserTool](mdc:src/browser.py) provides automated web browsing and content extraction for the agent. Key features:
+
+- Used for both web search and direct content extraction from URLs
+- Supports actions: search, navigate_and_extract, extract, search_next_page
+- Extracts main content from HTML (using readability/markdownify) and PDFs (using PyMuPDF)
+- Handles CAPTCHAs automatically if Recognizer is available and enabled in [config.yaml](mdc:config.yaml)
+- Integrates with the agent for web research and content gathering
+- Tracks token usage for extracted content
+- Handles errors gracefully for unsupported or problematic content types
+
+See [browser.py](mdc:src/browser.py) for implementation details and configuration options.

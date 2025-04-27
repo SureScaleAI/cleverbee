@@ -395,10 +395,10 @@ Both options include the original research topic and research plan for context.
         cl.user_session.set("research_plan", research_plan)
         cl.user_session.set("research_completed", True)
         
-        # --- NEW: Extract and display summary and sources as-is ---
+        # ---Extract and display summary and sources as-is ---
         import re
-        summary_match = re.search(r'---SUMMARY_START---(.*?)---SUMMARY_END---', summary, re.DOTALL)
-        sources_match = re.search(r'---SOURCES_START---(.*?)---SOURCES_END---', summary, re.DOTALL)
+        summary_match = re.search(r'<summary>(.*?)</summary>', summary, re.DOTALL)
+        sources_match = re.search(r'<sources>(.*?)</sources>', summary, re.DOTALL)
         summary_md = summary_match.group(1).strip() if summary_match else summary.strip()
         sources_md = sources_match.group(1).strip() if sources_match else ""
         
@@ -753,18 +753,17 @@ async def on_use_full_content(action: cl.Action):
         metadata = {"skip_ui_updates": True}
         
         # <<< ADD: Configuration for large output >>>
-        llm_config = {
-            "callbacks": callbacks,
-            "metadata": metadata,
-            "max_output_tokens": config.settings.MAX_CONTINUED_CONVERSATION_TOKENS
-        }
-        logger.info(f"Invoking LLM for full content response with max_output_tokens={llm_config['max_output_tokens']}")
+        max_output_tokens = config.settings.MAX_CONTINUED_CONVERSATION_TOKENS
+        
+        logger.info(f"Invoking LLM for full content response with max_output_tokens={max_output_tokens}")
         # <<< END ADD >>>
 
         # First try to get a response
         response = await llm_client.agenerate(
             messages=messages,
-            config=llm_config 
+            callbacks=callbacks,
+            metadata=metadata,
+            max_output_tokens=max_output_tokens
         )
         
         # >>> ADDED: Log LLM parameters before response processing <<<

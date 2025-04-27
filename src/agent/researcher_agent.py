@@ -2772,7 +2772,7 @@ class ResearcherAgent:
                 sources_section = self.content_manager.generate_sources_section()
                 
                 # Combine summary and sources in the required format
-                formatted_summary = f"---SUMMARY_START---\n{summary}\n---SUMMARY_END---\n\n{sources_section}"
+                formatted_summary = f"<summary>\n{summary}\n</summary>\n\n{sources_section}"
                 
                 logger.info(f"Generated formatted summary with sources section")
                 return formatted_summary
@@ -2780,14 +2780,14 @@ class ResearcherAgent:
                 # Fallback if no content manager or accumulated content
                 logger.warning("No content manager or accumulated content for summary. Using fallback approach.")
                 # Generate empty sources section
-                empty_sources = "---SOURCES_START---\nNo sources were collected during research.\n---SOURCES_END---"
-                return f"---SUMMARY_START---\nNo research content was collected on the topic '{topic}'.\n---SUMMARY_END---\n\n{empty_sources}"
+                empty_sources = "<sources>\nNo sources were collected during research.\n</sources>"
+                return f"<summary>\nNo research content was collected on the topic '{topic}'.\n</summary>\n\n{empty_sources}"
         except Exception as e:
             # Handle errors gracefully
             logger.error(f"Error generating summary: {e}", exc_info=True)
             error_summary = f"An error occurred while generating the research summary: {e}"
-            error_sources = "---SOURCES_START---\nSources unavailable due to error.\n---SOURCES_END---"
-            return f"---SUMMARY_START---\n{error_summary}\n---SUMMARY_END---\n\n{error_sources}"
+            error_sources = "<sources>\nSources unavailable due to error.\n</sources>"
+            return f"<summary>\n{error_summary}\n</summary>\n\n{error_sources}"
 
     def _get_token_usage_statistics(self) -> str:
         """Get token usage statistics for the current research run.
@@ -2995,8 +2995,8 @@ class ResearcherAgent:
         """Post-process the summary to extract sections, fetch titles for URLs, and format."""
         logger.debug(f"Raw summary input for post-processing:\n{summary}")
         # Define section patterns
-        summary_pattern = r"---SUMMARY_START---\s*([\\s\\S]*?)\s*---SUMMARY_END---"
-        sources_pattern = r"---SOURCES_START---\s*([\\s\\S]*?)\s*---SOURCES_END---"
+        summary_pattern = r"<summary>\\s*([\\s\\S]*?)\\s*</summary>"
+        sources_pattern = r"<sources>\\s*([\\s\\S]*?)\\s*</sources>"
         
         try:
             # Extract the main summary content

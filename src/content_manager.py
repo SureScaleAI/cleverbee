@@ -401,9 +401,9 @@ class ContentManager:
             sources.append(f"{item.source_url}")
                 
         if sources:
-            return "---SOURCES_START---\n" + "\n".join(sources) + "\n---SOURCES_END---"
+            return "<sources>\n" + "\n".join(sources) + "\n</sources>"
         else:
-            return "---SOURCES_START---\nNo sources were used.\n---SOURCES_END---"
+            return "<sources>\nNo sources were used.\n</sources>"
 
     async def get_summary(self, url_or_id: str, callbacks: Optional[List[BaseCallbackHandler]] = None, content: Optional[str] = None) -> str:
         """Get a summary for a URL/ID or directly provided content.

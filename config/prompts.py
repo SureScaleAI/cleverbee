@@ -320,19 +320,13 @@ Follow these instructions carefully:
 {accumulated_content}
 </Accumulated Content>
 
-Format your response using EXACTLY these section delimiters:
-
----SUMMARY_START---
+Format your response as follows:
+<summary>
 [Your comprehensive research report with MARKDOWN formatting here. ADD numbered citations like [1], [2], etc. for important facts as you write the summary]
----SUMMARY_END---
-
----SOURCES_START---
-[Include ONLY numbered sources that you explicitly cited in the summary section. Use format: 1. URL1]
-[Make sure each numbered citation in your summary has a corresponding numbered source here]
-[If no sources were explicitly cited in the summary, explain why briefly]
----SOURCES_END---
-
-Be precise with these delimiters - they will be used for automated processing.
+</summary>
+<sources>
+[List of sources, URLs, or references used in the research, if any]
+</sources>
 """
 
 # --- Tool Correction Prompt --- #

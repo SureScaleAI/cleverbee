@@ -168,6 +168,8 @@ Task:
 Based only on the context above, determine the single best next action to continue the research on '{topic}'.
 Your goal is to gather enough high-quality, balanced information to write a comprehensive final report, respecting any tool usage (including minimum/maximum) requirements. Avoid repeating sources unless necessary.
 
+You will always have new content (success or error) after each tool call. Never wait for system processing—always analyze the latest result and proceed, unless explicitly told to pause or a blocking error requires it.
+
 **IMPORTANT:** If the `last_action` indicates a `web_browser` search action or a `reddit_search` was just performed, look for a recent `ToolMessage` in the `history` containing the search results (usually presented as a markdown table). Use the URLs from *that table* for any subsequent `web_browser` or `reddit_extract_post` actions. Do NOT hallucinate URLs or re-run the search if the results are available in the history.
 
 Consider these factors:

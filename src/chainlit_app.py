@@ -398,11 +398,23 @@ Both options include the original research topic and research plan for context.
         cl.user_session.set("research_completed", True)
         
         # ---Extract and display summary and sources as-is ---
-        import re
-        summary_match = re.search(r'<summary>(.*?)</summary>', summary, re.DOTALL)
-        sources_match = re.search(r'<sources>(.*?)</sources>', summary, re.DOTALL)
-        summary_md = summary_match.group(1).strip() if summary_match else summary.strip()
-        sources_md = sources_match.group(1).strip() if sources_match else ""
+        def strip_tags(text):
+            # Remove all <summary>, </summary>, <sources>, </sources> tags, anywhere in the string
+            return re.sub(r'</?\s*(summary|sources)\s*>', '', text, flags=re.IGNORECASE)
+        
+        # Log the raw summary for debugging
+        logger.info(f"Raw summary from LLM:\n{summary}")
+
+        summary_match = re.search(r'<summary>(.*?)</summary>', summary, re.DOTALL | re.IGNORECASE)
+        sources_match = re.search(r'<sources>(.*?)</sources>', summary, re.DOTALL | re.IGNORECASE)
+
+        if not summary_match:
+            logger.warning("Could not find <summary> tags in summary. Raw summary:\n" + summary)
+        if not sources_match:
+            logger.warning("Could not find <sources> tags in summary. Raw summary:\n" + summary)
+
+        summary_md = strip_tags(summary_match.group(1).strip()) if summary_match else strip_tags(summary.strip())
+        sources_md = strip_tags(sources_match.group(1).strip()) if sources_match else ""
         
         end_time = datetime.now()
         logger.info(f"Research process finished in {end_time - start_time}")
@@ -411,11 +423,9 @@ Both options include the original research topic and research plan for context.
             await processing_msg.update()
         await chainlit_callback.display_final_token_summary()
         # --- Render summary and sources as clean markdown ---
-        def strip_tags(text):
-            return re.sub(r'</?(summary|sources)>', '', text, flags=re.IGNORECASE)
-        display_content = f"**Final Summary:**\n\n{strip_tags(summary_md)}\n\n"
+        display_content = f"**Final Summary:**\n\n{summary_md}\n\n"
         if sources_md:
-            display_content += f"### References\n{strip_tags(sources_md)}\n\n"
+            display_content += f"### References\n{sources_md}\n\n"
         display_content += "---\nYou can now ask follow-up questions about this research. I'll give you the option to use either just this summary or the full detailed content I've gathered for answering your questions."
         await cl.Message(content=display_content, author="Researcher").send()
     except Exception as e:
@@ -465,10 +475,6 @@ async def on_use_summary(action: cl.Action):
         content_type_description="research summary"
     )
     
-    # Send thinking message (ephemeral)
-    thinking_msg = cl.Message(content="Analyzing your question based on the summary...", author="Researcher", is_ephemeral=True)
-    await thinking_msg.send()
-    
     try:
         # Get response from LLM - Using proper LangChain message format
         messages = [[HumanMessage(content=prompt)]]
@@ -651,9 +657,6 @@ async def on_use_summary(action: cl.Action):
                 
                 response_text = final_response.generations[0][0].text if final_response and final_response.generations else response_text
         
-        # Remove thinking message
-        await thinking_msg.remove()
-        
         # Send response
         # >>> ADDED: Log the first and last parts of the response to avoid log truncation <<<
         logger.info(f"Attempting to send full content response (length: {len(response_text)} chars).")
@@ -688,14 +691,11 @@ async def on_use_summary(action: cl.Action):
             if summary_parts:
                 await cl.Message(
                     content="\n".join(summary_parts),
-                    author="System",
-                    is_ephemeral=True
+                    author="System"
                 ).send()
                 
     except Exception as e:
         logger.error(f"Error generating follow-up response: {e}", exc_info=True)
-        # Proper error handling
-        await thinking_msg.remove()
         await cl.Message(content=f"❌ Error analyzing your question: {e}", author="Researcher").send()
 
 @cl.action_callback("use_full_content")
@@ -735,10 +735,6 @@ async def on_use_full_content(action: cl.Action):
         content_type_description="full research content"
     )
     
-    # Send thinking message (ephemeral)
-    thinking_msg = cl.Message(content="Analyzing your question based on the full research content...", author="Researcher", is_ephemeral=True)
-    await thinking_msg.send()
-    
     try:
         # Get response from LLM - Using proper LangChain message format
         messages = [[HumanMessage(content=prompt)]]
@@ -921,9 +917,6 @@ async def on_use_full_content(action: cl.Action):
                 
                 response_text = final_response.generations[0][0].text if final_response and final_response.generations else response_text
         
-        # Remove thinking message
-        await thinking_msg.remove()
-        
         # Send response
         # >>> ADDED: Log the first and last parts of the response to avoid log truncation <<<
         logger.info(f"Attempting to send full content response (length: {len(response_text)} chars).")
@@ -958,14 +951,11 @@ async def on_use_full_content(action: cl.Action):
             if summary_parts:
                 await cl.Message(
                     content="\n".join(summary_parts),
-                    author="System",
-                    is_ephemeral=True
+                    author="System"
                 ).send()
                 
     except Exception as e:
         logger.error(f"Error generating follow-up response: {e}", exc_info=True)
-        # Proper error handling
-        await thinking_msg.remove()
         await cl.Message(content=f"❌ Error analyzing your question: {e}", author="Researcher").send()
 
 @cl.on_chat_end

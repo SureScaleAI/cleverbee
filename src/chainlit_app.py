@@ -5,6 +5,7 @@ import sys
 from datetime import datetime
 import contextlib
 from typing import Optional, List
+import re
 
 # --- Ensure project root is in path for imports --- #
 project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -119,7 +120,8 @@ async def start_chat():
             provider=PRIMARY_MODEL_TYPE,
             callbacks=session_callbacks,
             use_retry_wrapper=True,  # Enable retry functionality
-            max_retries=3  # Set maximum retries to 3
+            max_retries=3,  # Set maximum retries to 3
+            max_tokens=config.settings.MAX_CONTINUED_CONVERSATION_TOKENS  # <--- ADDED
         )
         cl.user_session.set("llm_client", llm_client)
         logger.info(f"LLM Client ({PRIMARY_MODEL_TYPE}) initialized and stored in session.")
@@ -409,9 +411,11 @@ Both options include the original research topic and research plan for context.
             await processing_msg.update()
         await chainlit_callback.display_final_token_summary()
         # --- Render summary and sources as clean markdown ---
-        display_content = f"**Final Summary:**\n\n{summary_md}\n\n"
+        def strip_tags(text):
+            return re.sub(r'</?(summary|sources)>', '', text, flags=re.IGNORECASE)
+        display_content = f"**Final Summary:**\n\n{strip_tags(summary_md)}\n\n"
         if sources_md:
-            display_content += f"### References\n{sources_md}\n\n"
+            display_content += f"### References\n{strip_tags(sources_md)}\n\n"
         display_content += "---\nYou can now ask follow-up questions about this research. I'll give you the option to use either just this summary or the full detailed content I've gathered for answering your questions."
         await cl.Message(content=display_content, author="Researcher").send()
     except Exception as e:
@@ -461,8 +465,8 @@ async def on_use_summary(action: cl.Action):
         content_type_description="research summary"
     )
     
-    # Send thinking message
-    thinking_msg = cl.Message(content="Analyzing your question based on the summary...", author="Researcher")
+    # Send thinking message (ephemeral)
+    thinking_msg = cl.Message(content="Analyzing your question based on the summary...", author="Researcher", is_ephemeral=True)
     await thinking_msg.send()
     
     try:
@@ -477,13 +481,11 @@ async def on_use_summary(action: cl.Action):
         
         # Create callbacks list and metadata dict separately
         callbacks = [token_manager]  # Only include token manager for now
-        metadata = {"skip_ui_updates": True}
         
         # First try to get a response
         response = await llm_client.agenerate(
             messages=messages,
-            callbacks=callbacks,
-            metadata=metadata
+            callbacks=callbacks
         )
         
         # >>> ADDED: Log LLM parameters before response processing <<<
@@ -644,8 +646,7 @@ async def on_use_summary(action: cl.Action):
                 # Get final response with tool results incorporated
                 final_response = await llm_client.agenerate(
                     messages=messages,
-                    callbacks=callbacks,
-                    metadata=metadata
+                    callbacks=callbacks
                 )
                 
                 response_text = final_response.generations[0][0].text if final_response and final_response.generations else response_text
@@ -734,8 +735,8 @@ async def on_use_full_content(action: cl.Action):
         content_type_description="full research content"
     )
     
-    # Send thinking message
-    thinking_msg = cl.Message(content="Analyzing your question based on the full research content...", author="Researcher")
+    # Send thinking message (ephemeral)
+    thinking_msg = cl.Message(content="Analyzing your question based on the full research content...", author="Researcher", is_ephemeral=True)
     await thinking_msg.send()
     
     try:
@@ -750,20 +751,11 @@ async def on_use_full_content(action: cl.Action):
         
         # Create callbacks list and metadata dict separately
         callbacks = [token_manager]  # Only include token manager for now
-        metadata = {"skip_ui_updates": True}
         
-        # <<< ADD: Configuration for large output >>>
-        max_output_tokens = config.settings.MAX_CONTINUED_CONVERSATION_TOKENS
-        
-        logger.info(f"Invoking LLM for full content response with max_output_tokens={max_output_tokens}")
-        # <<< END ADD >>>
-
         # First try to get a response
         response = await llm_client.agenerate(
             messages=messages,
-            callbacks=callbacks,
-            metadata=metadata,
-            max_output_tokens=max_output_tokens
+            callbacks=callbacks
         )
         
         # >>> ADDED: Log LLM parameters before response processing <<<
@@ -924,8 +916,7 @@ async def on_use_full_content(action: cl.Action):
                 # Get final response with tool results incorporated
                 final_response = await llm_client.agenerate(
                     messages=messages,
-                    callbacks=callbacks,
-                    metadata=metadata
+                    callbacks=callbacks
                 )
                 
                 response_text = final_response.generations[0][0].text if final_response and final_response.generations else response_text

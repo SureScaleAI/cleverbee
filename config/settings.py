@@ -236,3 +236,5 @@ logger.info(f"Defined AVAILABLE_TOOLS: {list(AVAILABLE_TOOLS.keys())}")
 DEBUG_MODE = os.getenv("DEBUG_MODE", "False").lower() == "true"
 
 # --- Further global settings --- #
+# Timeout (in seconds) for the entire extraction/navigation process in browser tool
+TOTAL_EXTRACTION_TIMEOUT = 60

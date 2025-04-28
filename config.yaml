@@ -137,7 +137,7 @@ MIN_POSTS_PER_SEARCH: 1 # Minimum Reddit posts the tool should attempt to return
 MAX_POSTS_PER_SEARCH: 10 # Maximum Reddit posts the tool should return per search query.
 # --- Browser Behavior ---
 # Settings for the underlying Playwright browser instance used by tools like `web_browser`.
-BROWSER_NAVIGATION_TIMEOUT: 15000 # Maximum time (in milliseconds) to wait for a single page
+BROWSER_NAVIGATION_TIMEOUT: 15 # Maximum time (in seconds) to wait for a single page
 # navigation (e.g., clicking a link, loading a URL) to complete.
 USE_CAPTCHA_SOLVER: true # If true, attempts to use an integrated CAPTCHA solving service
 # (like Recognizer, if available) when encountering challenges.

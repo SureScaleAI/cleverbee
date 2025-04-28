@@ -51,7 +51,8 @@ from config.settings import (
     BROWSER_NAVIGATION_TIMEOUT, 
     USE_PROGRESSIVE_LOADING,
     USE_CAPTCHA_SOLVER,
-    TRACK_TOKEN_USAGE
+    TRACK_TOKEN_USAGE,
+    TOTAL_EXTRACTION_TIMEOUT
 )
 
 # Import BaseCallbackHandler for type hinting
@@ -608,6 +609,7 @@ class PlaywrightBrowserTool(BaseTool):
             # Navigate to the URL
             logger.info(f"Navigating to {url} for content extraction")
             response = await page.goto(url, wait_until="domcontentloaded", timeout=BROWSER_NAVIGATION_TIMEOUT * 1000)
+            logger.info(f"Timeout: {BROWSER_NAVIGATION_TIMEOUT * 1000} seconds")
             if response and not response.ok:
                 status = response.status
                 error_msg = f"Navigation failed with status {status}. Cannot extract content."
@@ -1394,8 +1396,14 @@ class PlaywrightBrowserTool(BaseTool):
                 url = input_data.get("url")
                 if not url:
                     return "Error: URL is required for navigation"
-                # _navigate_and_extract returns str
-                return await self._navigate_and_extract(url) 
+                # --- GLOBAL TIMEOUT PATCH ---
+                import asyncio
+                try:
+                    return await asyncio.wait_for(self._navigate_and_extract(url), timeout=TOTAL_EXTRACTION_TIMEOUT)
+                except asyncio.TimeoutError:
+                    logger.error(f"Extraction timed out after {TOTAL_EXTRACTION_TIMEOUT} seconds for URL: {url}")
+                    return f"Error: Extraction timed out after {TOTAL_EXTRACTION_TIMEOUT} seconds for URL: {url}"
+                # --- END PATCH ---
                 
             elif action == "search":
                 query = input_data.get("query") or input_data.get("search_query")
@@ -1414,7 +1422,20 @@ class PlaywrightBrowserTool(BaseTool):
                     return "Error: Search query is required for pagination"
                 # _search_next_page returns str
                 return await self._search_next_page(query, page)
-                
+            
+            elif action == "extract_content":
+                url = input_data.get("url")
+                if not url:
+                    return "Error: URL is required for extraction"
+                # --- GLOBAL TIMEOUT PATCH ---
+                import asyncio
+                try:
+                    return await asyncio.wait_for(self._extract_content(url), timeout=TOTAL_EXTRACTION_TIMEOUT)
+                except asyncio.TimeoutError:
+                    logger.error(f"Extraction timed out after {TOTAL_EXTRACTION_TIMEOUT} seconds for URL: {url}")
+                    return {"title": "Timeout", "full_content": f"Extraction timed out after {TOTAL_EXTRACTION_TIMEOUT} seconds for URL: {url}"}
+                # --- END PATCH ---
+            
             else:
                 return f"Error: Unknown action '{action}'. Supported actions: navigate_and_extract, extract (alias for navigate_and_extract), search, search_next_page"
                 

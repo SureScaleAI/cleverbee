@@ -2949,7 +2949,8 @@ class ResearcherAgent:
             prompt_str = SUMMARY_PROMPT.format(topic=topic, accumulated_content=content)
             messages = [HumanMessage(content=prompt_str)]
             callbacks = getattr(self, 'callbacks', None)
-            run_config = {"callbacks": callbacks} if callbacks else None
+            # Pass tags to suppress callback handler message
+            run_config = {"callbacks": callbacks, "tags": ["final_summary_llm"]} if callbacks else {"tags": ["final_summary_llm"]}
             response = await self.final_summary_llm.ainvoke(messages, config=run_config)
             summary_text = getattr(response, 'content', None)
             if summary_text:

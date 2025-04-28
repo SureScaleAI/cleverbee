@@ -1,8 +1,8 @@
-# CleverBee: AI Research and Online Data Information Synthesis Assistant
+# CleverBee: AI-Powered Online Data Information Synthesis Assistant
 
 <p align="center">
   <a href="https://cleverb.ee">
-    <img src="public/logo_dark.svg" alt="CleverBee Logo" width="300">
+    <img src="public/logo_light.svg" alt="CleverBee Logo" width="300">
   </a>
 </p>
 
@@ -14,7 +14,7 @@
 
 ---
 
-CleverBee is a powerful Python-based research agent using Large Language Models (LLMs) like Claude and Gemini, Playwright for web browsing, and Chainlit for an interactive UI. It performs research by browsing the web, extracting content (HTML), cleaning it, and summarizing findings based on user research topics.
+CleverBee is a powerful Python-based research agent using Large Language Models (LLMs) like Claude and Gemini, Playwright for web browsing, and Chainlit for an interactive UI. It performs research assistance by browsing the web, extracting content (HTML), cleaning it, and synthesizing findings based on user research topics.
 
 ## ✨ Features
 
@@ -33,6 +33,7 @@ CleverBee is a powerful Python-based research agent using Large Language Models 
 
 ### What cleverb.ee is not
 Cleverb.ee is not a replacement for deep domain expertise.
+Despite explicit instructions and low temperature settings, AI can still hallucinate. Always check the sources.
 
 ## 🖥️ System Compatibility
 

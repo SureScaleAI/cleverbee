@@ -1402,7 +1402,10 @@ class PlaywrightBrowserTool(BaseTool):
                     return await asyncio.wait_for(self._navigate_and_extract(url), timeout=TOTAL_EXTRACTION_TIMEOUT)
                 except asyncio.TimeoutError:
                     logger.error(f"Extraction timed out after {TOTAL_EXTRACTION_TIMEOUT} seconds for URL: {url}")
-                    return f"Error: Extraction timed out after {TOTAL_EXTRACTION_TIMEOUT} seconds for URL: {url}"
+                    # Return any content that was extracted before the timeout, if available
+                    if self.last_extracted_content and self.last_extracted_content.get("full_content"):
+                        return self.last_extracted_content["full_content"]
+                    return ""
                 # --- END PATCH ---
                 
             elif action == "search":
@@ -1433,7 +1436,10 @@ class PlaywrightBrowserTool(BaseTool):
                     return await asyncio.wait_for(self._extract_content(url), timeout=TOTAL_EXTRACTION_TIMEOUT)
                 except asyncio.TimeoutError:
                     logger.error(f"Extraction timed out after {TOTAL_EXTRACTION_TIMEOUT} seconds for URL: {url}")
-                    return {"title": "Timeout", "full_content": f"Extraction timed out after {TOTAL_EXTRACTION_TIMEOUT} seconds for URL: {url}"}
+                    # Return any content that was extracted before the timeout, if available
+                    if self.last_extracted_content and self.last_extracted_content.get("full_content"):
+                        return self.last_extracted_content["full_content"]
+                    return ""
                 # --- END PATCH ---
             
             else:

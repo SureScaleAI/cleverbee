@@ -416,6 +416,12 @@ Both options include the original research topic and research plan for context.
         summary_md = strip_tags(summary_match.group(1).strip()) if summary_match else strip_tags(summary.strip())
         sources_md = strip_tags(sources_match.group(1).strip()) if sources_match else ""
         
+        # Remove leading/trailing code block markers if present
+        summary_md = re.sub(r"^```(?:\\w+)?\\n?", "", summary_md)  # Remove opening ```
+        summary_md = re.sub(r"\\n?```$", "", summary_md)            # Remove closing ```
+        sources_md = re.sub(r"^```(?:\\w+)?\\n?", "", sources_md)  # Remove opening ``` from sources
+        sources_md = re.sub(r"\\n?```$", "", sources_md)            # Remove closing ``` from sources
+        
         end_time = datetime.now()
         logger.info(f"Research process finished in {end_time - start_time}")
         if processing_msg:

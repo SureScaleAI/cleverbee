@@ -1,4 +1,4 @@
-# CleverBee: Advanced AI Research Assistant
+# CleverBee: AI Research and Online Data Information Synthesis Assistant
 
 <p align="center">
   <a href="https://cleverb.ee">
@@ -30,6 +30,9 @@ CleverBee is a powerful Python-based research agent using Large Language Models 
 -   ⚙️ **Highly Configurable:** Settings managed via `config.yaml`
 -   🚀 **Modular LLM Clients:** Supports different providers (Gemini, Claude, Local GGUF via llama-cpp-python)
 -   💾 **LLM Caching:** Employs `NormalizingCache` (SQLite-based) for improved performance and cost reduction
+
+### What cleverb.ee is not
+Cleverb.ee is not a replacement for deep domain expertise.
 
 ## 🖥️ System Compatibility
 

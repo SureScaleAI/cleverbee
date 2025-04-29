@@ -16,7 +16,7 @@ markdownify==0.11.6
 readability-lxml==0.8.1
 
 # Document processing
-pymupdf==1.23.8  # PDF processing library
+pymupdf==1.25.5  # PDF processing library (use new import style)
 
 # LangChain ecosystem
 langchain==0.3.24
@@ -32,7 +32,7 @@ langchain-mcp-adapters==0.0.9
 
 # MCP (Model Context Protocol) tools
 mcp==1.6.0
-pubmedmcp>=0.1.3  # Updated PubMed MCP client
+pubmedmcp>=0.1.3
 
 # Local models support (will be installed with correct flags in setup.sh)
 # llama-cpp-python

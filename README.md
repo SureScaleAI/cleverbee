@@ -14,7 +14,7 @@
 
 ---
 
-CleverBee is a powerful Python-based research assistance agent using Large Language Models (LLMs) like Claude and Gemini, Playwright for web browsing, and Chainlit for an interactive UI. It performs research assistance by browsing the web, extracting content (HTML), cleaning it, and synthesizing findings based on user research topics.
+CleverBee is a powerful Python-based research assistant agent using Large Language Models (LLMs) like Claude and Gemini, Playwright for web browsing, and Chainlit for an interactive UI. It performs research assistance by browsing the web, extracting content (HTML), cleaning it, and synthesizing findings based on user research topics.
 
 ## ✨ Features
 

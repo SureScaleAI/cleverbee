@@ -41,7 +41,7 @@ from langchain_core.tools import BaseTool
 from pydantic import BaseModel, Field
 from readability import Document # Using readability-lxml
 import markdownify # For converting HTML to Markdown
-import fitz  # PyMuPDF's import name is fitz, not pymupdf
+import pymupdf  # PyMuPDF's import name is now pymupdf, not fitz
 import aiofiles
 from bs4 import BeautifulSoup
 # from src.content_manager import ContentManager # Remove direct import
@@ -114,7 +114,7 @@ def extract_content_from_pdf(pdf_bytes: bytes) -> dict:
         logger.info("Starting PDF content extraction")
         start_time = time.time()
         
-        with fitz.open(stream=pdf_bytes, filetype="pdf") as doc:
+        with pymupdf.open(stream=pdf_bytes, filetype="pdf") as doc:
             # Get PDF metadata
             pdf_size_kb = len(pdf_bytes) / 1024
             total_pages = len(doc)

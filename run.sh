@@ -27,13 +27,14 @@ done
 if [ -z "$VIRTUAL_ENV" ]; then
   # Activate virtual environment if it exists (optional, adjust path if needed)
   ACTIVATED_VENV=false
-  if [ -d "venv" ]; then
-    echo "Activating virtual environment (venv)..."
-    source venv/bin/activate
-    ACTIVATED_VENV=true
-  elif [ -d ".venv" ]; then
+  # PRIORITIZE .venv first
+  if [ -d ".venv" ]; then
     echo "Activating virtual environment (.venv)..."
     source .venv/bin/activate
+    ACTIVATED_VENV=true
+  elif [ -d "venv" ]; then
+    echo "Activating virtual environment (venv)..."
+    source venv/bin/activate
     ACTIVATED_VENV=true
   fi
 else
@@ -95,21 +96,6 @@ then
     fi
 fi
 
-# Check for critical dependencies
-echo "Checking for critical dependencies..."
-if ! python -c "import fitz; print(f'PyMuPDF successfully imported as fitz')" &> /dev/null; then
-    echo "Warning: 'PyMuPDF' module not found. Installing it now..."
-    pip install pymupdf==1.23.8
-    
-    if [ $? -ne 0 ]; then
-        echo "Error: Failed to install PyMuPDF. Please install it manually with: pip install pymupdf==1.23.8"
-        if [ "$ACTIVATED_VENV" = true ] && type deactivate &>/dev/null; then deactivate; fi
-        exit 1
-    else
-        echo "PyMuPDF installed successfully."
-    fi
-fi
-
 # --- Cache Deletion Logic ---
 DB_FILE=".langchain.db"
 if [ "$NO_CACHE_FLAG" = true ]; then
@@ -125,11 +111,85 @@ if [ "$NO_CACHE_FLAG" = true ]; then
 fi
 # --- End Cache Deletion Logic ---
 
+# --- Version (Tag) Based Update Detection ---
+git fetch --tags
+LOCAL_TAG=$(git describe --tags --abbrev=0 2>/dev/null)
+REMOTE_TAG=$(git ls-remote --tags origin | awk -F/ '{print $3}' | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -n1)
+
+if [ -z "$REMOTE_TAG" ]; then
+  echo "No remote version tags found. Skipping version update check."
+  REPO_UPDATED=false
+elif [ "$LOCAL_TAG" != "$REMOTE_TAG" ]; then
+  echo "A new version ($REMOTE_TAG) is available. You are on $LOCAL_TAG."
+  read -p "Do you want to update to the latest version? (Y/n): " -n 1 -r
+  echo
+  if [[ $REPLY =~ ^[Yy]$ || -z $REPLY ]]; then
+    # Only check for uncommitted changes if user wants to update
+    if ! git diff-index --quiet HEAD --; then
+      echo "You have uncommitted changes. Please commit or stash them before updating the repo."
+      exit 1
+    fi
+    git checkout "$REMOTE_TAG" || { echo "Failed to checkout $REMOTE_TAG. Please resolve manually."; exit 1; }
+    REPO_UPDATED=true
+  else
+    echo "Skipping update. Running with current version ($LOCAL_TAG)."
+    REPO_UPDATED=false
+  fi
+else
+  REPO_UPDATED=false
+fi
+
+# --- Check if requirements.txt changed after pull ---
+REQUIREMENTS="requirements.txt"
+HASH_FILE=".venv/.requirements_hash"
+if [ -f "$REQUIREMENTS" ]; then
+  CURRENT_HASH=$(shasum -a 256 "$REQUIREMENTS" | awk '{print $1}')
+else
+  CURRENT_HASH=""
+fi
+NEEDS_INSTALL=false
+if [ ! -f "$HASH_FILE" ]; then
+  NEEDS_INSTALL=true
+elif [ -n "$CURRENT_HASH" ]; then
+  STORED_HASH=$(cat "$HASH_FILE")
+  if [ "$CURRENT_HASH" != "$STORED_HASH" ]; then
+    NEEDS_INSTALL=true
+  fi
+fi
+
+if [ "$REPO_UPDATED" = true ] && [ "$NEEDS_INSTALL" = true ]; then
+  read -p "requirements.txt has changed. Update dependencies? (Y/n): " -n 1 -r
+  echo
+  if [[ $REPLY =~ ^[Yy]$ || -z $REPLY ]]; then
+    pip install --upgrade -r "$REQUIREMENTS"
+    if [ $? -eq 0 ]; then
+      echo "$CURRENT_HASH" > "$HASH_FILE"
+      echo "Dependencies updated."
+    else
+      echo "Dependency installation failed. Please check the output above."
+      exit 1
+    fi
+  else
+    echo "Skipping dependency update. The application may not run correctly."
+  fi
+fi
+
+# Detect the correct python executable (prefer python3, fallback to python)
+if command -v python3 &> /dev/null; then
+  PYTHON_CMD=python3
+elif command -v python &> /dev/null; then
+  PYTHON_CMD=python
+else
+  echo "Error: Neither 'python3' nor 'python' was found in PATH. Please install Python 3.8+ and try again."
+  if [ "$ACTIVATED_VENV" = true ] && type deactivate &>/dev/null; then deactivate; fi
+  exit 1
+fi
+
 # If chainlit command was found (either initially or after install), run the application
 # -w flag enables auto-reloading, remove if not desired for production
 # Use eval to correctly handle quoted arguments in CHAINLIT_ARGS
 echo "Starting Chainlit app (src/chainlit_app.py) with args: $CHAINLIT_ARGS..."
-eval chainlit run src/chainlit_app.py $CHAINLIT_ARGS
+eval $PYTHON_CMD -m chainlit run src/chainlit_app.py $CHAINLIT_ARGS
 
 # Deactivate virtual environment (if applicable)
 # Check if deactivate function exists before calling

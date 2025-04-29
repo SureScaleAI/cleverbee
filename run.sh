@@ -115,7 +115,7 @@ fi
 CURRENT_BRANCH=$(git rev-parse --abbrev-ref HEAD)
 if [ "$CURRENT_BRANCH" = "main" ]; then
   git fetch origin main
-  LOCAL_HASH=$(git rev-parse main)
+  LOCAL_HASH=$(git rev-parse HEAD)
   REMOTE_HASH=$(git rev-parse origin/main)
   if [ "$LOCAL_HASH" != "$REMOTE_HASH" ]; then
     echo "A new version is available on origin/main."

@@ -111,31 +111,32 @@ if [ "$NO_CACHE_FLAG" = true ]; then
 fi
 # --- End Cache Deletion Logic ---
 
-# --- Version (Tag) Based Update Detection ---
-git fetch --tags
-LOCAL_TAG=0.0.0
-REMOTE_TAG=$(git ls-remote --tags origin | awk -F/ '{print $3}' | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -n1)
-
-if [ -z "$REMOTE_TAG" ]; then
-  echo "No remote version tags found. Skipping version update check."
-  REPO_UPDATED=false
-elif [ "$LOCAL_TAG" != "$REMOTE_TAG" ]; then
-  echo "A new version ($REMOTE_TAG) is available. You are on $LOCAL_TAG."
-  read -p "Do you want to update to the latest version? (Y/n): " -n 1 -r
-  echo
-  if [[ $REPLY =~ ^[Yy]$ || -z $REPLY ]]; then
-    # Only check for uncommitted changes if user wants to update
-    if ! git diff-index --quiet HEAD --; then
-      echo "You have uncommitted changes. Please commit or stash them before updating the repo."
-      exit 1
+# --- Main Branch Update Logic ---
+CURRENT_BRANCH=$(git rev-parse --abbrev-ref HEAD)
+if [ "$CURRENT_BRANCH" = "main" ]; then
+  git fetch origin main
+  LOCAL_HASH=$(git rev-parse main)
+  REMOTE_HASH=$(git rev-parse origin/main)
+  if [ "$LOCAL_HASH" != "$REMOTE_HASH" ]; then
+    echo "A new version is available on origin/main."
+    read -p "Do you want to pull the latest changes? (Y/n): " -n 1 -r
+    echo
+    if [[ $REPLY =~ ^[Yy]$ || -z $REPLY ]]; then
+      if ! git diff-index --quiet HEAD --; then
+        echo "You have uncommitted changes. Please commit or stash them before updating the repo."
+        exit 1
+      fi
+      git pull origin main || { echo "git pull failed. Please resolve manually."; exit 1; }
+      REPO_UPDATED=true
+    else
+      echo "Skipping git pull. Running with current codebase."
+      REPO_UPDATED=false
     fi
-    git checkout "$REMOTE_TAG" || { echo "Failed to checkout $REMOTE_TAG. Please resolve manually."; exit 1; }
-    REPO_UPDATED=true
   else
-    echo "Skipping update. Running with current version ($LOCAL_TAG)."
     REPO_UPDATED=false
   fi
 else
+  echo "You are not on the main branch (current: $CURRENT_BRANCH). Please switch to main to get updates."
   REPO_UPDATED=false
 fi
 

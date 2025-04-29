@@ -113,7 +113,7 @@ fi
 
 # --- Version (Tag) Based Update Detection ---
 git fetch --tags
-LOCAL_TAG=$(git describe --tags --abbrev=0 2>/dev/null)
+LOCAL_TAG=0.0.0
 REMOTE_TAG=$(git ls-remote --tags origin | awk -F/ '{print $3}' | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -n1)
 
 if [ -z "$REMOTE_TAG" ]; then

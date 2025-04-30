@@ -29,6 +29,7 @@ DEFAULT_CONFIG = {
     # --- Local Model Configuration --- #
     "LOCAL_MODELS_DIR": "models",  # Directory for storing local models
     "N_GPU_LAYERS": -1, # Number of layers to offload to GPU (-1 = try all)
+    "OLLAMA_SERVER_URL": "http://localhost:11434", # Default Ollama server URL
 
     # --- Content Management Settings --- #
     "USE_PROGRESSIVE_LOADING": True,

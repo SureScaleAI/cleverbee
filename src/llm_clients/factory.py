@@ -9,6 +9,7 @@ import asyncio
 # LangChain component imports
 from langchain_anthropic import ChatAnthropic
 from langchain_google_genai import ChatGoogleGenerativeAI
+from langchain_ollama import ChatOllama
 from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.callbacks import BaseCallbackHandler
 from langchain_core.messages import BaseMessage
@@ -25,7 +26,7 @@ import config.settings
 
 logger = logging.getLogger(__name__)
 
-ProviderType = Literal["claude", "gemini", "local"]
+ProviderType = Literal["claude", "gemini", "local", "ollama"]
 
 # Add a RetryingLLM class that wraps any LLM with retry functionality
 class RetryingLLM(BaseChatModel):
@@ -388,7 +389,7 @@ def get_llm_client(
     """Factory function to create and return a LangChain chat model client.
 
     Args:
-        provider: The LLM provider ("claude", "gemini", or "local").
+        provider: The LLM provider ("claude", "gemini", "local", or "ollama").
         model_name: The specific model name to use. Defaults to config settings.
         api_key: The API key for the provider. Defaults to config settings or env vars.
         max_tokens: The maximum number of tokens for the response. Defaults based on provider/usage.
@@ -491,6 +492,52 @@ def get_llm_client(
         except Exception as e:
             logger.error(f"Failed to initialize ChatGoogleGenerativeAI client: {e}", exc_info=True)
             raise RuntimeError(f"Failed to initialize ChatGoogleGenerativeAI client: {e}")
+            
+    elif provider == "ollama":
+        try:
+            # Ollama를 사용하기 위해 필요한 모듈을 가져옵니다
+            from langchain_ollama import ChatOllama
+            logger.info("Successfully imported ChatOllama module")
+        except ImportError as ie:
+            logger.error(f"Failed to import modules required for Ollama: {ie}", exc_info=True)
+            raise RuntimeError(f"Ollama provider requires additional dependencies. Run: pip install langchain-community") from ie
+        
+        # 모델 이름과 서버 URL 결정
+        try :
+            model_name = config.settings.OLLAMA_MODEL_NAME
+        except:
+            raise ValueError("Model name must be specified for Ollama. Example: 'llama3', 'llama3:8b', 'llama3:70b'")
+        
+        # Ollama 서버 URL 가져오기
+        ollama_server_url = config.settings.OLLAMA_SERVER_URL or "http://localhost:11434"
+        
+        # 토큰 생성 한도 설정
+        if is_summary_client:
+            final_max_tokens = max_tokens or config.settings.SUMMARY_MAX_TOKENS or 1024
+        else:
+            final_max_tokens = max_tokens or 16384
+            
+        logger.info(f"Creating Ollama client for model: {model_name} at {ollama_server_url}")
+        
+        try:
+            # ChatOllama 인스턴스 생성
+            llm_client = ChatOllama(
+                model=model_name,
+                base_url=ollama_server_url,
+                max_tokens=final_max_tokens,
+                callbacks=callbacks,
+                temperature=0.2 if is_summary_client else 0.7,
+                tags=tags,
+                request_timeout=60.0,
+                verbose=True
+            )
+            logger.info(f"Successfully created ChatOllama client for model: {model_name} with tags: {llm_client.tags}")
+        except Exception as e:
+            logger.error(f"Failed to initialize ChatOllama client: {e}", exc_info=True)
+            error_msg = f"Failed to initialize ChatOllama client for {model_name}: {e}"
+            error_msg += "\n -> Please make sure Ollama server is running at " + ollama_server_url
+            error_msg += "\n -> You can start Ollama with 'ollama serve' command"
+            raise RuntimeError(error_msg)
             
     elif provider == "local":
         # --- REFACTOR for LlamaCpp ---

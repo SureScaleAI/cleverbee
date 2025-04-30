@@ -23,6 +23,7 @@ PRIMARY_MODEL_TYPE: "gemini"
 # The system will use the model that corresponds to the selected PRIMARY_MODEL_TYPE.
 CLAUDE_MODEL_NAME: "claude-3-7-sonnet-20250219"
 GEMINI_MODEL_NAME: "gemini-2.5-pro-preview-03-25"
+OLLAMA_MODEL_NAME: "llama3.2"
 LOCAL_MODEL_NAME: null
 LOCAL_MODEL_QUANT_LEVEL: null
 # --- Local Model Usage ---

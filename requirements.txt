@@ -12,7 +12,7 @@ beautifulsoup4==4.13.0
 html2text==2025.4.15
 lxml==5.4.0
 lxml-html-clean==0.4.2
-markdownify==0.11.6
+markdownify==0.14.1
 readability-lxml==0.8.1
 
 # Document processing

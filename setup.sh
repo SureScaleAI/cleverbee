@@ -33,7 +33,7 @@ else
 fi
 
 # --- Configuration Variables ---
-PYTHON_CMD="python3.12"
+PYTHON_CMD="python3"
 VENV_DIR="venv"
 MCP_JSON_FILE="mcp.json"
 MODELS_DIR="models"

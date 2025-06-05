@@ -1,5 +1,8 @@
 import asyncio
 import logging
+
+# Set up logger early for module-level uses
+logger = logging.getLogger(__name__)
 import json
 import random # <-- Added import
 from typing import Any, Dict, List, Type, Optional, Callable, Awaitable, Union, TypeVar
@@ -19,22 +22,32 @@ TIKTOKEN_ENCODING = "cl100k_base"
 try:
     encoding = tiktoken.get_encoding(TIKTOKEN_ENCODING)
 except Exception as e:
-     logger.warning(f"Failed to get tiktoken encoding '{TIKTOKEN_ENCODING}', falling back to p50k_base. Error: {e}")
-     TIKTOKEN_ENCODING = "p50k_base"
-     encoding = tiktoken.get_encoding(TIKTOKEN_ENCODING)
+    logger.warning(
+        f"Failed to get tiktoken encoding '{TIKTOKEN_ENCODING}', falling back to p50k_base. Error: {e}"
+    )
+    TIKTOKEN_ENCODING = "p50k_base"
+    try:
+        encoding = tiktoken.get_encoding(TIKTOKEN_ENCODING)
+    except Exception as e2:
+        logger.warning(
+            "Failed to load fallback tiktoken encoding 'p50k_base'. Token counting will use a rough estimate. Error: %s",
+            e2,
+        )
+        encoding = None
+
+
 def get_token_count_for_text(text: str) -> int:
     """Uses tiktoken to count tokens for a given text."""
     if not text:
         return 0
+    if encoding is None:
+        return len(text) // 4
     try:
         return len(encoding.encode(text))
     except Exception as e:
-        logger.warning(f"Tiktoken encoding failed: {e}. Falling back to character count estimate.")
-        return len(text) // 4 # Fallback estimate
+        logger.warning("Tiktoken encoding failed: %s. Falling back to character count estimate.", e)
+        return len(text) // 4
 # --- End Tiktoken setup ---
-
-# Set up logger
-logger = logging.getLogger(__name__)
 
 from playwright.async_api import async_playwright, Page, Browser, Playwright, Response, BrowserContext, TimeoutError, Error # Import BrowserContext
 from langchain_core.tools import BaseTool

@@ -19,6 +19,8 @@ from config.settings import (
     GEMINI_FLASH_COST_PER_1K_OUTPUT,
     GEMINI_25_FLASH_PREVIEW_COST_PER_1K_INPUT,
     GEMINI_25_FLASH_PREVIEW_COST_PER_1K_OUTPUT,
+    GEMINI_SUMMARY_COST_PER_1K_INPUT,
+    GEMINI_SUMMARY_COST_PER_1K_OUTPUT,
     CLAUDE_MODEL_NAME,
     GEMINI_MODEL_NAME,
     SUMMARIZER_MODEL,
@@ -48,7 +50,12 @@ MODEL_PRICING = {
     "gemini_main": {
         "input_cost_per_1k": GEMINI_COST_PER_1K_INPUT_TOKENS,
         "output_cost_per_1k": GEMINI_COST_PER_1K_OUTPUT_TOKENS
-    }
+    },
+    # Summarization Gemini model
+    "gemini_summary": {
+        "input_cost_per_1k": GEMINI_SUMMARY_COST_PER_1K_INPUT,
+        "output_cost_per_1k": GEMINI_SUMMARY_COST_PER_1K_OUTPUT
+    },
     # Local models handled in _calculate_cost
 }
 
@@ -345,15 +352,75 @@ class TokenCostProcess:
 
 class TokenUsageCallbackHandler(BaseCallbackHandler):
     """LangChain Callback Handler to track token usage and calculate cost."""
-    
-    def __init__(self, token_cost_processor: TokenCostProcess):
-        self.token_cost_processor = token_cost_processor
+
+    def __init__(self, token_cost_processor: Optional[TokenCostProcess] = None):
+        # Allow optional injection of TokenCostProcess for easier testing
+        self.token_cost_processor = token_cost_processor or TokenCostProcess()
+        self.successful_requests = 0
+        self._model_usage: Dict[str, Dict[str, Any]] = {
+            "claude": {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0, "total_cost": 0.0},
+            "gemini_main": {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0, "total_cost": 0.0},
+            "gemini_summary": {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0, "total_cost": 0.0},
+        }
+        self._prompt_tokens = 0
+        self._completion_tokens = 0
+        self._total_tokens = 0
         # Initialize cache hit tracking - THESE ARE NOW HANDLED BY TokenCostProcess
-        # self.cache_hits = {} 
+        # self.cache_hits = {}
         # self.total_saved_tokens_input = 0
         # self.total_saved_tokens_output = 0
         # self.total_saved_cost = 0.0
         self.model_roles: Dict[UUID, str] = {} # Stores role (primary/summarizer) per run_id
+
+    # ----- Convenience Properties -----
+    @property
+    def model_usage(self) -> Dict[str, Dict[str, Any]]:
+        return self._model_usage
+
+    @property
+    def prompt_tokens(self) -> int:
+        return self._prompt_tokens
+
+    @prompt_tokens.setter
+    def prompt_tokens(self, value: int) -> None:
+        self._prompt_tokens = value
+
+    @property
+    def completion_tokens(self) -> int:
+        return self._completion_tokens
+
+    @completion_tokens.setter
+    def completion_tokens(self, value: int) -> None:
+        self._completion_tokens = value
+
+    @property
+    def total_tokens(self) -> int:
+        return self._total_tokens
+
+    @total_tokens.setter
+    def total_tokens(self, value: int) -> None:
+        self._total_tokens = value
+
+    @property
+    def total_cost(self) -> float:
+        return sum(usage["total_cost"] for usage in self._model_usage.values())
+
+    def get_total_cost(self) -> float:
+        return self.total_cost
+
+    def reset(self) -> None:
+        """Reset all tracked statistics."""
+        self.token_cost_processor = TokenCostProcess()
+        self.model_roles.clear()
+        self._model_usage = {
+            "claude": {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0, "total_cost": 0.0},
+            "gemini_main": {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0, "total_cost": 0.0},
+            "gemini_summary": {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0, "total_cost": 0.0},
+        }
+        self._prompt_tokens = 0
+        self._completion_tokens = 0
+        self._total_tokens = 0
+        self.successful_requests = 0
 
     def on_llm_start(
         self, serialized: Dict[str, Any], prompts: List[str], *, run_id: UUID, parent_run_id: Optional[UUID] = None, tags: Optional[List[str]] = None, metadata: Optional[Dict[str, Any]] = None, **kwargs: Any
@@ -525,6 +592,15 @@ class TokenUsageCallbackHandler(BaseCallbackHandler):
                 prompt_tokens=prompt_tokens,
                 completion_tokens=completion_tokens
             )
+            self._model_usage.setdefault(model_key, {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0, "total_cost": 0.0})
+            self._model_usage[model_key]["input_tokens"] += prompt_tokens
+            self._model_usage[model_key]["output_tokens"] += completion_tokens
+            self._model_usage[model_key]["total_tokens"] += prompt_tokens + completion_tokens
+            self._model_usage[model_key]["total_cost"] += _calculate_cost(model_key, prompt_tokens, completion_tokens)
+            self._prompt_tokens += prompt_tokens
+            self._completion_tokens += completion_tokens
+            self._total_tokens += prompt_tokens + completion_tokens
+            self.successful_requests += 1
         else:
              logger.error(f"LLM End (run_id={run_id}): token_cost_processor not available to update usage for model '{model_key}'.")
 
@@ -556,7 +632,27 @@ class TokenUsageCallbackHandler(BaseCallbackHandler):
             
         logger.debug(f"Handler received cache hit: Model='{model_name}', Input={input_tokens}, Output={output_tokens}")
         # Pass to the processor
-        self.token_cost_processor.update_cache_hit(model_name, input_tokens, output_tokens) 
+        self.token_cost_processor.update_cache_hit(model_name, input_tokens, output_tokens)
+
+    def log_summary(self) -> None:
+        """Log a simple summary based on the current in-memory statistics."""
+        if not TRACK_TOKEN_USAGE or not LOG_COST_SUMMARY:
+            return
+
+        logger.info("===== Token Usage and Cost Summary =====")
+        total_tokens = self._total_tokens
+        total_cost = 0.0
+        for model_name, usage in self._model_usage.items():
+            cost = usage.get("total_cost", 0.0)
+            total_cost += cost
+            logger.info(f"{model_name.replace('_', ' ').title()} Usage:")
+            logger.info(
+                f"  Tokens: {usage['input_tokens']} prompt, {usage['output_tokens']} completion, {usage['total_tokens']} total"
+            )
+            logger.info(f"  Cost: ${cost:.4f}")
+        logger.info(
+            f"Total usage across all models: {total_tokens} tokens, ${total_cost:.4f}"
+        )
 
 # --- Standalone Functions for Global Usage --- #
 

@@ -3,7 +3,7 @@ anthropic==0.50.0
 google-generativeai==0.8.5
 
 # Web UI and interface
-chainlit==2.5.5
+chainlit==2.9.4
 
 # Web browsing and content extraction
 playwright>=1.51.0  # Always use latest version
